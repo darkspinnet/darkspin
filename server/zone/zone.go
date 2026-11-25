@@ -297,12 +297,22 @@ func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
 			return nil, fmt.Errorf("zoneRestore: %w", err)
 		}
 	}
+	// Restoring zone rules can replace the horde owner. Bind the overlay to the
+	// final owner, then give every actor the same configured mesh.
+	configuredNavigation, hordeNavigationErr := zone.info.Horde.ConfigureNavigation(zone.info.DirectorDefinition, zone.info.Navigation)
+	if hordeNavigationErr != nil {
+		cancel()
+		return nil, fmt.Errorf("zoneHordeNavigation: %w", hordeNavigationErr)
+	}
+	zone.info.Navigation = configuredNavigation
+	info.Navigation = configuredNavigation
 	navigationErr := info.NPCs.ConfigureNavigation(info.Navigation, info.DirectorDefinition.NounFootprintsByInstance)
 	if navigationErr != nil {
 		cancel()
 		return nil, fmt.Errorf("zoneNavigation: %w", navigationErr)
 	}
 	info.Companion.ConfigureActorFootprints(info.DirectorDefinition.NounFootprintsByNoun)
+	info.Companion.ConfigureNavigation(info.Navigation)
 	info.Companion.BindMovementModifiers(info.Effect)
 	info.Companion.ConfigureNPCProfiles(info.DirectorDefinition.NPCProfilesByNoun)
 	info.NPCs.ConfigureAffixContext(info.Difficulty, uint32(len(zone.members)))
@@ -1382,6 +1392,9 @@ func (e *Zone) SetHeroStealthed(
 			e.mu.Unlock()
 			return nil, fmt.Errorf("instanceStealthTargetRelease: %w", err)
 		}
+		for _, npc := range released {
+			e.PublishNPCMovementPause(npc)
+		}
 	}
 	acquired, err := e.info.NPCs.AcquireTargets(
 		e.livePlayerAlignedTargets(), true,
@@ -1390,16 +1403,16 @@ func (e *Zone) SetHeroStealthed(
 		e.mu.Unlock()
 		return nil, fmt.Errorf("instanceStealthTargetAcquire: %w", err)
 	}
-	returning := e.returnUnacquiredNPCs(released, acquired)
 	timeline := e.info.Timeline
 	e.mu.Unlock()
 	for _, npc := range released {
 		timeline.Cancel(zonenpc.FirstActionTimelineKey(npc.Plan.ObjectID))
+		// Losing sight of a cloaked hero stops pursuit at the current pose.
+		timeline.Cancel(zonenpc.ReturnTimelineKey(npc.Plan.ObjectID))
 	}
 	for _, npc := range acquired {
 		timeline.Cancel(zonenpc.ReturnTimelineKey(npc.Plan.ObjectID))
 	}
-	e.publishNPCReturns(returning)
 	return acquired, nil
 }
 
@@ -1910,6 +1923,17 @@ func (e *Zone) completeNPCReturn(objectID uint32) {
 		e.mu.Unlock()
 		return
 	}
+	rootRemaining := e.info.NPCs.RootRemaining(objectID, time.Now())
+	if rootRemaining > 0 {
+		step := npcReturnStep{zone: e, objectID: objectID}
+		err := e.info.Timeline.Schedule(zonenpc.ReturnTimelineKey(objectID), rootRemaining, step.execute, e.info.Timer.Schedule)
+		e.mu.Unlock()
+		if err != nil {
+			// A stopped zone or an already scheduled return needs no retry.
+			return
+		}
+		return
+	}
 	returning := e.info.NPCs.ReturnHome([]uint32{objectID})
 	e.mu.Unlock()
 	e.publishNPCReturns(returning)
@@ -2037,6 +2061,10 @@ func (e *Zone) Snapshot() Snapshot {
 func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 	if e == nil {
 		return errors.New("nil zone")
+	}
+	ruleErr := e.restoreZoneRules(snapshot)
+	if ruleErr != nil {
+		return fmt.Errorf("checkpointRules: %w", ruleErr)
 	}
 	if snapshot.IsPopulationRandomSet && e.info.Population != nil {
 		err := e.info.Population.RestoreRandom(snapshot.PopulationRandom, snapshot.PopulationMixedRandomState)
@@ -2567,10 +2595,13 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	security := e.info.Security.Snapshot()
 	hordes := e.info.Horde.Snapshots()
 	triggerProgresses := e.info.Director.TriggerProgress()
+	zoneRules := e.checkpointZoneRules()
 	snapshot := zonecheckpoint.Snapshot{
+		ZoneRules: zoneRules, IsZoneRuleSnapshotSet: zoneRules.Key != "",
 		EnemyPopulationRules: e.info.DirectorDefinition.EnemyPopulationRules.Resolved(), BossSpawnRules: e.info.DirectorDefinition.BossSpawnRules.Resolved(), IsSpawnRuleSnapshotSet: true,
 		Version: zonecheckpoint.Version, ZoneID: zoneID, RunSeed: runSeed,
 		IsReplayRandomized: isReplayRandomized,
+		IsNoReplay:         e.info.DirectorDefinition.IsNoReplay,
 		ZoneGeneration:     generation, CompletionID: e.CompletionID(),
 		Level: level, Difficulty: difficulty, Reason: reason,
 		SavedAt: now, Elapsed: elapsed, Members: members, Heroes: heroes,
@@ -3048,9 +3079,40 @@ func (e *Zone) RecordNPCDamage(
 	var objectiveErr error
 	if !damage.IsDamageImmune {
 		objectiveErr = e.ApplyNPCDamageObjectives(ctx, damage)
+		if damage.Damage > 0 && damage.HitPoint > 0 {
+			wakeErr := e.wakeDamagedRaytheoid(damage)
+			if wakeErr != nil {
+				objectiveErr = errors.Join(objectiveErr, wakeErr)
+			}
+		}
 	}
 	e.projection.PublishNPCDamage(damage)
 	return objectiveErr
+}
+
+func (e *Zone) wakeDamagedRaytheoid(damage zonenpc.DamageEvent) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.state != StateActive || e.info.NPCs == nil {
+		return nil
+	}
+	hero, isFound := e.info.Hero.SnapshotByObjectID(damage.SourceObjectID)
+	if !isFound || hero.IsStealthed || hero.HitPoint <= 0 {
+		return nil
+	}
+	owner := zonenpc.ActionOwner{UserID: hero.UserID, PeerGeneration: hero.PeerGeneration}
+	actor, isAcquired, err := e.info.NPCs.WakeDamagedRaytheoid(damage.TargetObjectID, zonenpc.Target{
+		ObjectID: hero.ObjectID, Position: hero.Position, FootprintRadius: hero.FootprintRadius,
+		Faction: zonenpc.FactionPlayerAligned, Owner: owner, IsAlive: true,
+	})
+	if err != nil {
+		return fmt.Errorf("raytheoidWake: %w", err)
+	}
+	if isAcquired {
+		e.info.Timeline.Cancel(zonenpc.ReturnTimelineKey(actor.Plan.ObjectID))
+		e.projection.PublishNPCTargets([]zonenpc.Snapshot{actor}, zoneprojection.Subscriber{})
+	}
+	return nil
 }
 
 // RecordNPCHeal routes committed non-player healing through selected packaged
@@ -3399,7 +3461,7 @@ func (e *Zone) resurrectNPC(
 		return zonenpc.Snapshot{}, false, errors.New("npc resurrection unavailable")
 	}
 	defeated, isFound := e.NPCs().NPC(objectID)
-	if !isFound || !defeated.IsDefeated || defeated.Plan.IsFixture {
+	if !isFound || !defeated.IsDefeated || defeated.Plan.IsFixture || zonenpc.IsResurrectionBlocked(defeated.Plan) {
 		return zonenpc.Snapshot{}, false, nil
 	}
 	if e.Boss() != nil && !e.Boss().CanRevive(defeated) {
@@ -3489,6 +3551,20 @@ func (e *Zone) PublishNPCActionAll(action zonenpc.ActionEvent) {
 		return
 	}
 	e.projection.PublishNPCActionAll(action)
+}
+
+func (e *Zone) PublishNPCMovementPause(npc zonenpc.Snapshot) {
+	if !npc.IsActionStarted || npc.IsIntroductionPending() {
+		return
+	}
+	e.PublishNPCActionAll(zonenpc.ActionEvent{
+		Kind: zonenpc.ActionEventMovementPause,
+		Plan: zonenpc.FirstActionPlan{
+			ObjectID:       npc.Plan.ObjectID,
+			SourcePosition: npc.Plan.Position,
+			SourceFacing:   npc.Facing,
+		},
+	})
 }
 
 func (e *Zone) PublishNPCForcedMovement(

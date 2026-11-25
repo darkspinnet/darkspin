@@ -29,6 +29,13 @@ type EnrageState interface {
 	RemoveEnrage(uint32, uint32, bool, float32) error
 }
 
+// EnrageModifierState lets production retain exact companion contributions
+// while the legacy state port remains available to older integrations.
+type EnrageModifierState interface {
+	ApplyEnrageModifier(uint32, uint32, bool, uint32, uint32, float32, float32) error
+	RemoveEnrageModifier(uint32, uint32, bool, uint32, float32) error
+}
+
 type EnrageRun struct {
 	creatureIndex      uint32
 	targetObjectID     uint32
@@ -199,10 +206,13 @@ func (r *EnrageRun) Apply(
 	if err != nil {
 		return nil, 0, fmt.Errorf("enrageMarshal: %w", err)
 	}
-	err = state.ApplyEnrage(
-		r.creatureIndex, r.targetObjectID, r.isCompanion,
-		damageBonus, hitPoint,
-	)
+	modifierState, isModifierState := state.(EnrageModifierState)
+	if isModifierState && r.isCompanion {
+		err = modifierState.ApplyEnrageModifier(r.creatureIndex, r.targetObjectID, true,
+			r.instanceID, r.replacedInstanceID, r.damageBonus, hitPoint)
+	} else {
+		err = state.ApplyEnrage(r.creatureIndex, r.targetObjectID, r.isCompanion, damageBonus, hitPoint)
+	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("enrageCommit: %w", err)
 	}
@@ -248,9 +258,12 @@ func (r *EnrageRun) Expire(state EnrageState) ([][]byte, error) {
 		return nil, fmt.Errorf("enrageScaleReset: %w", err)
 	}
 	if r.isApplied {
-		err = state.RemoveEnrage(
-			r.creatureIndex, r.targetObjectID, r.isCompanion, r.damageBonus,
-		)
+		modifierState, isModifierState := state.(EnrageModifierState)
+		if isModifierState && r.isCompanion {
+			err = modifierState.RemoveEnrageModifier(r.creatureIndex, r.targetObjectID, true, r.instanceID, r.damageBonus)
+		} else {
+			err = state.RemoveEnrage(r.creatureIndex, r.targetObjectID, r.isCompanion, r.damageBonus)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("enrageRemove: %w", err)
 		}

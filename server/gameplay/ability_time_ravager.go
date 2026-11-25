@@ -46,7 +46,7 @@ func (e heroTimeRavagerSlowExpiry) produce() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	peerSession.zone.NPCs().ClearSlow(e.run.targetObjectID, e.run.expiresAt)
+	peerSession.zone.NPCs().ClearSlowModifier(e.run.targetObjectID, e.run.modifier.instanceID)
 	peerSession.zone.Effect().Remove(e.run.modifier.instanceID)
 	peerSession.untrackCampaignNPCModifier(e.run.modifier)
 	delete(peerSession.heroTimeRavagerSlows, e.run.targetObjectID)
@@ -92,6 +92,13 @@ func (e campaignDamageRuntime) applyTimeRavagerSlow(
 		peerSession.heroTimeRavagerSlows = make(map[uint32]*heroTimeRavagerSlowRun)
 	}
 	run := peerSession.heroTimeRavagerSlows[result.Damage.ObjectID]
+	if run != nil && run.modifier.isRetired() {
+		// A dispel or corpse cleanup may have retired the modifier before
+		// this owner index was observed. Never cap or refresh a freed handle.
+		peerSession.untrackCampaignNPCModifier(run.modifier)
+		peerSession.forgetHeroTimeRavagerSlow(run.modifier)
+		run = nil
+	}
 	if run != nil && e.npc.now().Before(run.expiresAt) && run.stackCount >= timeRavagerSlowMaximumStack {
 		// IncrementStackCount returns false at cap, so authored modifier893
 		// does not call ResetDuration for this hit.
@@ -132,8 +139,8 @@ func (e campaignDamageRuntime) applyTimeRavagerSlow(
 	run.expiresAt = e.npc.now().Add(duration)
 	movementAdjustment := float32(run.stackCount) * timeRavagerMovementAdjustmentPerStack
 	attackAdjustment := float32(run.stackCount) * timeRavagerAttackAdjustmentPerStack
-	err := peerSession.zone.NPCs().ApplySlow(
-		run.targetObjectID, run.expiresAt,
+	err := peerSession.zone.NPCs().ApplySlowModifier(
+		run.targetObjectID, run.modifier.instanceID, run.expiresAt,
 		1+movementAdjustment, 1+attackAdjustment,
 	)
 	if err != nil {
@@ -172,8 +179,8 @@ func (e campaignDamageRuntime) applyTimeRavagerSlow(
 		err = peerSession.zone.Effect().Update(run.modifier.record)
 	}
 	if err != nil {
-		peerSession.zone.NPCs().ClearSlow(run.targetObjectID, run.expiresAt)
 		if isNew {
+			peerSession.zone.NPCs().ClearSlowModifier(run.targetObjectID, run.modifier.instanceID)
 			peerSession.untrackCampaignNPCModifier(run.modifier)
 		} else {
 			run.stackCount = previousStackCount
@@ -184,8 +191,8 @@ func (e campaignDamageRuntime) applyTimeRavagerSlow(
 				timeRavagerMovementAdjustmentPerStack
 			attackAdjustment = float32(previousStackCount) *
 				timeRavagerAttackAdjustmentPerStack
-			restoreErr := peerSession.zone.NPCs().ApplySlow(
-				run.targetObjectID, previousExpiresAt,
+			restoreErr := peerSession.zone.NPCs().ApplySlowModifier(
+				run.targetObjectID, run.modifier.instanceID, previousExpiresAt,
 				1+movementAdjustment, 1+attackAdjustment,
 			)
 			if restoreErr != nil && e.logger != nil {
@@ -278,13 +285,12 @@ func (e campaignDamageRuntime) rollbackTimeRavagerSlow(
 	isCurrent := isFound && peerSession.generation == generation &&
 		peerSession.heroTimeRavagerSlows[run.targetObjectID] == run
 	if isCurrent && isNew {
-		peerSession.zone.NPCs().ClearSlow(run.targetObjectID, run.expiresAt)
+		peerSession.zone.NPCs().ClearSlowModifier(run.targetObjectID, run.modifier.instanceID)
 		peerSession.zone.Effect().Remove(run.modifier.instanceID)
 		peerSession.untrackCampaignNPCModifier(run.modifier)
 		delete(peerSession.heroTimeRavagerSlows, run.targetObjectID)
 	}
 	if isCurrent && !isNew {
-		peerSession.zone.NPCs().ClearSlow(run.targetObjectID, run.expiresAt)
 		run.stackCount = previousStackCount
 		run.revision = previousRevision
 		run.expiresAt = previousExpiresAt
@@ -293,8 +299,8 @@ func (e campaignDamageRuntime) rollbackTimeRavagerSlow(
 			timeRavagerMovementAdjustmentPerStack
 		attackAdjustment := float32(previousStackCount) *
 			timeRavagerAttackAdjustmentPerStack
-		restoreErr := peerSession.zone.NPCs().ApplySlow(
-			run.targetObjectID, previousExpiresAt,
+		restoreErr := peerSession.zone.NPCs().ApplySlowModifier(
+			run.targetObjectID, run.modifier.instanceID, previousExpiresAt,
 			1+movementAdjustment, 1+attackAdjustment,
 		)
 		if restoreErr != nil && e.logger != nil {

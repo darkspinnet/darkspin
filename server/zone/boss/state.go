@@ -88,8 +88,7 @@ func (s *Session) Arm(
 	}
 	s.phase = PhaseArming
 	s.isInitialChain = isInitialPublication(publication)
-	s.isLeaderDeferred = s.isInitialChain ||
-		(plans[0].IsCaptain && len(plans) > 1)
+	s.isLeaderDeferred = plans[0].IsCaptain && len(plans) > 1
 	s.publication = clonePublication(publication)
 	s.leaderObjectID = plans[0].ObjectID
 	s.leaderHitPoint = plans[0].NPCProfile.HitPoint
@@ -121,6 +120,9 @@ func (s *Session) canArm(
 	if !plans[0].IsBoss || plans[0].ObjectID == 0 {
 		return errors.New("boss arm: missing leader")
 	}
+	if IsFinalBossNoun(plans[0].NounName) && (plans[0].IsCaptain || len(plans) != 1) {
+		return errors.New("boss arm: destructor pre-wave unavailable")
+	}
 	isInitialChain := isInitialPublication(publication)
 	isGeneric := isGenericCallback(publication.CallbackName) &&
 		publication.EventName != ""
@@ -128,7 +130,11 @@ func (s *Session) canArm(
 		return errors.New("boss arm: unsupported publication")
 	}
 	if isInitialChain {
-		if len(plans) != 1+4*int(s.spawnRules.Resolved().OpeningAddsPerAnchor) ||
+		expectedCount := 1
+		if plans[0].IsCaptain {
+			expectedCount += 4 * int(s.spawnRules.Resolved().OpeningAddsPerAnchor)
+		}
+		if len(plans) != expectedCount ||
 			!zonenpc.IsBossIdentityValid(plans[0].BossIdentity) {
 			return errors.New("boss arm: invalid Illust identity")
 		}

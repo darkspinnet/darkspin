@@ -165,6 +165,16 @@ func fetchManifest(ctx context.Context, manifestURL string) (updateManifest, err
 // transaction marker is durable before replacing darkrun; only the supervisor
 // starts the candidate and decides when its first boot is healthy.
 func (e *Storage) CheckUpdate(ctx context.Context, manifestURL, backupID string) (bool, error) {
+	isUpdated, err := e.checkUpdate(ctx, manifestURL, backupID, "", "")
+	if err != nil {
+		return false, fmt.Errorf("checkUpdate: %w", err)
+	}
+	return isUpdated, nil
+}
+
+func (e *Storage) checkUpdate(ctx context.Context, manifestURL, backupID, operationID, installedVersion string) (bool, error) {
+	e.candidateVersion = ""
+	e.isCandidateRestored = false
 	backup, err := e.backupPath(backupID)
 	if err != nil {
 		return false, fmt.Errorf("updateBackup: %w", err)
@@ -208,6 +218,10 @@ func (e *Storage) CheckUpdate(ctx context.Context, manifestURL, backupID string)
 	if err != nil {
 		return false, fmt.Errorf("updateManifest: %w", err)
 	}
+	if !safeResultText(manifest.Version, 128) {
+		return false, errors.New("invalid candidate version label")
+	}
+	e.candidateVersion = manifest.Version
 	if manifest.SHA256 == currentHash {
 		return false, nil
 	}
@@ -243,18 +257,23 @@ func (e *Storage) CheckUpdate(ctx context.Context, manifestURL, backupID string)
 	if err != nil {
 		return false, fmt.Errorf("candidateManifest: %w", err)
 	}
-	err = e.writeJSON(e.path("firstboot.json"), updateTransaction{Backup: backupID, Phase: "first_boot"})
+	err = e.writeJSON(e.path("firstboot.json"), updateTransaction{
+		Backup: backupID, Phase: "first_boot", OperationID: operationID,
+		InstalledVersion: installedVersion, CandidateVersion: manifest.Version,
+	})
 	if err != nil {
 		return false, fmt.Errorf("candidateState: %w", err)
 	}
 	err = os.Rename(candidate, e.path("bin", "darkrun"))
 	if err != nil {
 		rollbackErr := e.RollbackContext(ctx)
+		e.isCandidateRestored = rollbackErr == nil
 		return false, fmt.Errorf("candidateInstall: %w", errors.Join(err, rollbackErr))
 	}
 	err = syncDirectory(e.path("bin"))
 	if err != nil {
 		rollbackErr := e.RollbackContext(ctx)
+		e.isCandidateRestored = rollbackErr == nil
 		return false, fmt.Errorf("candidateSync: %w", errors.Join(err, rollbackErr))
 	}
 	return true, nil

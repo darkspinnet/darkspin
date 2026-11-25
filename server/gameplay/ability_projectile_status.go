@@ -253,7 +253,7 @@ func (e *heroProjectileStatusRun) Cleanup() heroProjectileStatusDelete {
 		case sim.AbilityStatusKindCurse:
 			e.npc.ClearCurse(e.targetID, e.expiresAt)
 		case sim.AbilityStatusKindStun:
-			e.npc.ClearStun(e.targetID, e.expiresAt)
+			e.npc.ClearStunModifier(e.targetID, e.instanceID)
 		}
 		_ = e.modifierPool.Release(e.instanceID)
 	}
@@ -286,7 +286,7 @@ func (e *heroProjectileStatusRun) clearSplashStatus(
 	case sim.AbilityStatusKindCurse:
 		e.npc.ClearCurse(target.targetID, target.expiresAt)
 	case sim.AbilityStatusKindStun:
-		e.npc.ClearStun(target.targetID, target.expiresAt)
+		e.npc.ClearStunModifier(target.targetID, target.instanceID)
 	}
 }
 
@@ -482,25 +482,38 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 	packets = filterProjectileCombatPackets(packets)
 	duration := zonenpc.CrowdControlDuration(target.Plan, e.definition.StatusDuration)
 	expiresAt := e.runtime.now().Add(duration)
-	err = e.applyStatus(peerSession.zone.NPCs(), expiresAt)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("projectileStatusApply: %w", err)
-	}
 	instanceID, err := e.runtime.modifierPool.Allocate()
 	if err != nil {
-		e.clearStatus(peerSession.zone.NPCs(), expiresAt)
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("projectileStatusModifier: %w", err)
 	}
+	reaction := laserModifierReaction{}
+	isAdmitted := true
+	if e.definition.StatusKind == sim.AbilityStatusKindStun {
+		reaction, isAdmitted, err = e.runtime.registry.admitLaserControlModifierLocked(
+			&peerSession, e.targetObjectID, instanceID, sim.AbilityStatusKindStun, e.runtime.now(), expiresAt)
+	} else {
+		err = e.applyStatus(peerSession.zone.NPCs(), expiresAt)
+	}
+	if err != nil {
+		releaseErr := e.runtime.modifierPool.Release(instanceID)
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("projectileStatusApply: %w", errors.Join(err, releaseErr))
+	}
+	if !isAdmitted {
+		releaseErr := e.runtime.modifierPool.Release(instanceID)
+		e.runtime.registry.mutex.Unlock()
+		if releaseErr != nil {
+			return nil, fmt.Errorf("deniedRelease: %w", releaseErr)
+		}
+		return packets, nil
+	}
 	if !e.run.Apply(instanceID, expiresAt) {
-		e.clearStatus(peerSession.zone.NPCs(), expiresAt)
+		e.clearStatus(peerSession.zone.NPCs(), instanceID, expiresAt)
 		_ = e.runtime.modifierPool.Release(instanceID)
 		e.runtime.registry.mutex.Unlock()
 		return packets, nil
 	}
-	e.runtime.registry.sessions[e.sessionKey] = peerSession
-	e.runtime.registry.mutex.Unlock()
 	modifierPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: e.targetObjectID, ModifierGUID: e.definition.RootModifierID,
 		InstanceID:           instanceID,
@@ -511,8 +524,14 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 		IsBound:              e.definition.StatusKind == sim.AbilityStatusKindStun,
 	})
 	if err != nil {
+		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("projectileStatusModifierMarshal: %w", err)
 	}
+	if e.definition.StatusKind == sim.AbilityStatusKindStun {
+		e.runtime.registry.queueLaserControlReactionLocked(e.sessionKey, &peerSession, reaction)
+	}
+	e.runtime.registry.sessions[e.sessionKey] = peerSession
+	e.runtime.registry.mutex.Unlock()
 	packets = append(packets, modifierPacket)
 	if e.definition.StatusKind != sim.AbilityStatusKindFear {
 		return packets, nil
@@ -745,15 +764,13 @@ func (e heroProjectileStatusSchedule) applyStatus(
 		return npc.ApplyFear(e.targetObjectID, expiresAt)
 	case sim.AbilityStatusKindCurse:
 		return npc.ApplyCurse(e.targetObjectID, expiresAt)
-	case sim.AbilityStatusKindStun:
-		return npc.ApplyStun(e.targetObjectID, expiresAt)
 	default:
 		return errors.New("unsupported projectile status")
 	}
 }
 
 func (e heroProjectileStatusSchedule) clearStatus(
-	npc *zonenpc.Session, expiresAt time.Time,
+	npc *zonenpc.Session, instanceID uint32, expiresAt time.Time,
 ) {
 	switch e.definition.StatusKind {
 	case sim.AbilityStatusKindFear:
@@ -761,7 +778,7 @@ func (e heroProjectileStatusSchedule) clearStatus(
 	case sim.AbilityStatusKindCurse:
 		npc.ClearCurse(e.targetObjectID, expiresAt)
 	case sim.AbilityStatusKindStun:
-		npc.ClearStun(e.targetObjectID, expiresAt)
+		npc.ClearStunModifier(e.targetObjectID, instanceID)
 	}
 }
 
@@ -813,8 +830,9 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 		return req.reject("projectile status definition unavailable")
 	}
 	target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+	isTargetless := definition.Name == "AfflictionBolt" && targetObjectID == 0
 	admissionRange := heroAbilityAdmissionRange(creature, definition)
-	if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 ||
+	if !isTargetless && (!isTargetFound || target.IsDefeated || target.HitPoint <= 0 ||
 		target.Faction != zonenpc.FactionNonPlayerAligned ||
 		(definition.Name == "AfflictionBolt" &&
 			(peerSession.zone.NPCs().CurseRemaining(targetObjectID, r.now()) > 0 ||
@@ -822,7 +840,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 		!isInsideZoneTrigger(
 			peerSession.playerPosition, raknet.Vector3(target.Plan.Position),
 			admissionRange,
-		) {
+		)) {
 		r.registry.mutex.Unlock()
 		return req.reject("projectile status target unavailable")
 	}
@@ -856,6 +874,9 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("projectileStatusSpeed: %w", err)
 	}
+	if projected.Name == "AfflictionBolt" {
+		projected.Distance = projected.Speed * float32(afflictionBoltFlightDuration(definition).Seconds())
+	}
 	previousProjectileObjectID := peerSession.nextProjectileObjectID
 	projectileObjectID, err := peerSession.reserveCampaignProjectileIDs(1, 1000)
 	if err != nil {
@@ -864,11 +885,16 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 	}
 	actorPosition := peerSession.playerPosition
 	actorFootprint := peerSession.deployedCampaignFootprintRadius()
-	geometry, _, err := campaignTargetProjectileGeometry(r.program, target)
-	if err != nil {
-		peerSession.restoreCampaignProjectileID(previousProjectileObjectID)
-		r.registry.mutex.Unlock()
-		return nil, fmt.Errorf("projectileStatusGeometry: %w", err)
+	geometry := zonenpc.ProjectileGeometry{}
+	if !isTargetless {
+		var isGeometryFallback bool
+		geometry, isGeometryFallback, err = campaignTargetProjectileGeometry(r.program, target)
+		if err != nil {
+			peerSession.restoreCampaignProjectileID(previousProjectileObjectID)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("projectileStatusGeometry: %w", err)
+		}
+		_ = isGeometryFallback
 	}
 	actorHeight := actorFootprint
 	actorPhysics, isActorPhysicsFound := r.program.NounPhysicsByID[creature.Noun]
@@ -882,6 +908,14 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 	targetPosition := raknet.Vector3(campaignProjectileAimPosition(
 		target.Plan.Position, target.Plan.NPCProfile.FootprintRadius, geometry,
 	))
+	if isTargetless {
+		targetPosition, err = afflictionBoltLaunchAim(actorPosition, actorFootprint, req.command.Common.Orientation)
+		if err != nil {
+			peerSession.restoreCampaignProjectileID(previousProjectileObjectID)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("afflictionLaunchAim: %w", err)
+		}
+	}
 	facing := zoneability.ProjectileDirection(actorPosition, targetPosition)
 	launchPosition := campaignProjectileLaunchPosition(
 		game.Vec3(actorPosition), game.Vec3(targetPosition), actorFootprint,
@@ -894,14 +928,22 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 		time.Duration(float64(travelDistance)/float64(projected.Speed)*float64(time.Second)),
 	)
 	impactDeadline := projected.HitDelay + travelDelay
+	collisionDelay := travelDelay
+	launchTargetID := targetObjectID
+	if projected.Name == "AfflictionBolt" {
+		collisionDelay = afflictionBoltFlightDuration(projected)
+	}
+	if isTargetless {
+		launchTargetID = req.command.Common.ObjectID
+	}
 	projectileRun, immediatePackets, err := abilityraknet.NewProjectileRun(
 		abilityraknet.ProjectileInput{
 			Ability: projected, ActorObjectID: req.command.Common.ObjectID,
-			TargetObjectID: targetObjectID, ProjectileObjectID: projectileObjectID,
+			TargetObjectID: launchTargetID, ProjectileObjectID: projectileObjectID,
 			ActorPosition: sim.Position(actorPosition), TargetPosition: sim.Position(targetPosition),
 			ActorFacing: sim.Position(facing), ImpactPosition: sim.Position(targetPosition),
 			FootprintRadius: actorFootprint,
-			CollisionDelay:  travelDelay, IsDirectHit: true,
+			CollisionDelay:  collisionDelay, IsDirectHit: true,
 			IsCollisionExternallyDriven: true, Damage: damage.Maximum,
 			TargetHitPoint: target.HitPoint, ActorTeam: 1,
 			SourceTime: req.packet.SourceTime,

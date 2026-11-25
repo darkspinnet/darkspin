@@ -84,8 +84,8 @@ func (e heroHealingTicksSchedule) startSporogenesis(deadline time.Duration) ([][
 		e.runtime.registry.queueChannelPresentationLocked(target.originZone, [][]byte{impactPacket})
 		e.runtime.registry.mutex.Unlock()
 		if !target.isNPC && !target.target.isCompanion {
-			purged, purgeErr := e.runtime.purgeHeroDebuffs(target.target.sessionKey, target.target.generation, target.target.objectID)
 			e.runtime.registry.mutex.Lock()
+			purged, purgeErr := e.runtime.purgeHeroDebuffsLocked(target.target.sessionKey, target.target.generation, target.target.objectID)
 			e.runtime.registry.queueChannelRemovalsLocked(target.originZone, purged)
 			e.runtime.registry.mutex.Unlock()
 			if purgeErr != nil {
@@ -220,6 +220,13 @@ func (e *sporogenesisHot) apply() error {
 func (e *sporogenesisHot) purgeTargetLocked() ([][]byte, error) {
 	packets := make([][]byte, 0)
 	if e.isNPC {
+		isFirePurged, fireErr := e.runtime.registry.retireFireVulnerabilityLocked(e.originZone, e.target.objectID)
+		if fireErr != nil {
+			return packets, fmt.Errorf("sporogenesisFirePurge: %w", fireErr)
+		}
+		if isFirePurged {
+			// The shared owner queued exact modifier removal for every peer.
+		}
 		fixturePackets, fixtureErr := e.runtime.registry.retireFixtureBurnsLocked(e.originZone.NPCs(), e.target.objectID, e.runtime.modifierPool)
 		packets = append(packets, fixturePackets...)
 		if fixtureErr != nil {
@@ -230,7 +237,15 @@ func (e *sporogenesisHot) purgeTargetLocked() ([][]byte, error) {
 		if cloudErr != nil {
 			return packets, fmt.Errorf("sporogenesisCloudPurge: %w", cloudErr)
 		}
+		isAuraPurged, auraErr := e.runtime.registry.retireTargetAuraModifiersLocked(e.originZone, e.target.objectID)
+		if auraErr != nil {
+			return packets, fmt.Errorf("sporogenesisAuraPurge: %w", auraErr)
+		}
+		if isAuraPurged {
+			// Accepted aura deletions are already queued to the shared zone.
+		}
 		e.originZone.NPCs().PurgeDebuffs(e.target.objectID)
+		e.runtime.registry.reconcileNPCChronoLocked(e.originZone, e.target.objectID)
 		packets = append(packets, e.runtime.registry.retireTargetInfectionRootsLocked(e.originZone.NPCs(), e.target.objectID)...)
 	}
 	// Companion debuffs retain their native target ID in the owner's ordinary

@@ -13,11 +13,12 @@ import (
 )
 
 type campaignNPCSilenceRun struct {
-	modifier  *campaignNPCModifierRun
-	targetID  uint32
-	expiresAt time.Time
-	revision  uint64
-	cancel    raknet.CancelSchedule
+	modifier   *campaignNPCModifierRun
+	modifierID uint32
+	targetID   uint32
+	expiresAt  time.Time
+	revision   uint64
+	cancel     raknet.CancelSchedule
 }
 
 type campaignNPCSilenceExpiryStep struct {
@@ -37,9 +38,7 @@ func (e campaignNPCSilenceExpiryStep) produce() ([][]byte, error) {
 		e.run.revision == e.revision
 	if isCurrent {
 		delete(peerSession.campaignNPCSilences, e.run.targetID)
-		if peerSession.deployedObjectID == e.run.targetID && peerSession.enemySilenceExpiresAt == e.run.expiresAt {
-			peerSession.enemySilenceExpiresAt = time.Time{}
-		}
+		peerSession.clearHeroControl(e.run.modifier.instanceID, e.run.targetID)
 		peerSession.untrackCampaignNPCModifier(e.run.modifier)
 		e.run.cancel = nil
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
@@ -115,6 +114,22 @@ func (r campaignNPCActionRuntime) applyCampaignNPCSilence(
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
+	duration := profile.ModifierDuration
+	if isRangedSilence && target.IsHero {
+		if peerSession.deployedCreatureIndex >= uint32(len(peerSession.binding.Creatures)) {
+			r.registry.mutex.Unlock()
+			return nil, errors.New("silence recipient unavailable")
+		}
+		// Build-103 modifier267 owns a ranked two-second duration and
+		// IsDebuff descriptor. Citadel's aura lease is a separate lifetime.
+		projected, durationErr := projectRecipientModifierDuration(duration, 1<<5,
+			peerSession.binding.Creatures[peerSession.deployedCreatureIndex])
+		if durationErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("silenceDuration: %w", durationErr)
+		}
+		duration = projected
+	}
 	if peerSession.campaignNPCSilences == nil {
 		peerSession.campaignNPCSilences = make(map[uint32]*campaignNPCSilenceRun)
 	}
@@ -142,9 +157,11 @@ func (r campaignNPCActionRuntime) applyCampaignNPCSilence(
 	previousExpiresAt := run.expiresAt
 	previousRevision := run.revision
 	previousCancel := run.cancel
-	previousHeroExpiresAt := peerSession.enemySilenceExpiresAt
+	previousHeroExpiresAt := previousExpiresAt
+	modifierID := util.HashID(profile.ModifierName)
+	isRefresh := !isNew && run.modifierID == modifierID
 	startedAt := r.now()
-	run.expiresAt = startedAt.Add(profile.ModifierDuration)
+	run.expiresAt = startedAt.Add(duration)
 	if previousExpiresAt.After(run.expiresAt) {
 		run.expiresAt = previousExpiresAt
 	}
@@ -153,21 +170,32 @@ func (r campaignNPCActionRuntime) applyCampaignNPCSilence(
 	expiresAt := run.expiresAt
 	peerSession.campaignNPCSilences[plan.TargetObjectID] = run
 	if plan.TargetObjectID == peerSession.deployedObjectID {
-		peerSession.extendEnemySilence(plan.TargetObjectID, run.expiresAt)
+		peerSession.admitHeroControl(heroControlSilence, run.modifier, plan.TargetObjectID, run.expiresAt)
 	}
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 
-	createPacket, err := effectraknet.ModifierCreate(
-		effectraknet.ModifierCreateRequest{
-			SourceObjectID: plan.SourceObjectID,
-			TargetObjectID: plan.TargetObjectID,
-			ModifierID:     util.HashID(profile.ModifierName),
-			InstanceID:     run.modifier.instanceID,
-			Duration:       expiresAt.Sub(startedAt),
-			Timestamp:      timestamp,
-		},
-	)
+	var createPacket []byte
+	var err error
+	if isRefresh {
+		// Build 103 refreshes the existing Lua modifier through Stacks on A3.
+		// Repeating A2 replaces its snapshot without refreshing that context.
+		createPacket, err = raknet.MarshalApplication(raknet.ModifierUpdatedMessage{
+			TargetID: plan.TargetObjectID, InstanceID: run.modifier.instanceID,
+			StartMilliseconds: int64(timestamp), StackCount: 1,
+		})
+	} else {
+		createPacket, err = effectraknet.ModifierCreate(
+			effectraknet.ModifierCreateRequest{
+				SourceObjectID: plan.SourceObjectID,
+				TargetObjectID: plan.TargetObjectID,
+				ModifierID:     modifierID,
+				InstanceID:     run.modifier.instanceID,
+				Duration:       expiresAt.Sub(startedAt),
+				Timestamp:      timestamp,
+			},
+		)
+	}
 	if err != nil {
 		r.rollbackNocturnaBasicRangedSilence(
 			sessionKey, generation, run, isNew, previousExpiresAt,
@@ -199,6 +227,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCSilence(
 		isLatest = run.modifier.create()
 	}
 	if isLatest {
+		run.modifierID = modifierID
 		run.cancel = raknet.CancelSchedule(cancel)
 		r.registry.sessions[sessionKey] = latest
 	}
@@ -230,8 +259,9 @@ func (r campaignNPCActionRuntime) rollbackNocturnaBasicRangedSilence(
 		peerSession.campaignNPCSilences[run.targetID] == run &&
 		run.revision == revision
 	if isCurrent {
-		if peerSession.deployedObjectID == run.targetID && peerSession.enemySilenceExpiresAt == run.expiresAt {
-			peerSession.enemySilenceExpiresAt = previousHeroExpiresAt
+		peerSession.clearHeroControl(run.modifier.instanceID, run.targetID)
+		if !isNew {
+			peerSession.admitHeroControl(heroControlSilence, run.modifier, run.targetID, previousHeroExpiresAt)
 		}
 		if isNew {
 			delete(peerSession.campaignNPCSilences, run.targetID)

@@ -300,7 +300,7 @@ func (e *heroAuraAreaRun) retireTimeBubbleLocked(now time.Time) error {
 		e.removeBubbleProjectileLocked(change.objectID, change.projectile, change.packets, now)
 	}
 	for objectID, target := range e.targets {
-		e.clearStatus(objectID, target.expiresAt)
+		e.clearAuraTargetStatus(objectID, target)
 		e.releaseBubbleAllocations([]uint32{target.instanceID})
 	}
 	e.targets = nil

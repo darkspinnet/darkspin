@@ -54,16 +54,8 @@ func migrateLauncherSettingsLocked(configPath string) error {
 		if err != nil {
 			return fmt.Errorf("legacyDecode: %w", err)
 		}
-		sections, readErr := readLauncherSections(configPath)
-		if readErr != nil {
-			return fmt.Errorf("configRead: %w", readErr)
-		}
-		launcherSections, sectionErr := launcherSection(sections, "launcher")
-		if sectionErr != nil {
-			return fmt.Errorf("configSection: %w", sectionErr)
-		}
-		mergeLauncherSections(launcherSections, legacySections)
-		err = saveLauncherSections(configPath, sections)
+		edit := launcherMigrationEdit{legacySections: legacySections}
+		err = game.WithConfiguration(configPath, edit.apply)
 		if err != nil {
 			return fmt.Errorf("migrationSave: %w", err)
 		}
@@ -93,16 +85,31 @@ func mergeLauncherSections(fields, legacyFields map[string]any) {
 	}
 }
 
-func readLauncherSections(path string) (map[string]any, error) {
+type launcherMigrationEdit struct{ legacySections map[string]any }
+
+func (e launcherMigrationEdit) apply(contents []byte) ([]byte, error) {
+	sections, err := decodeLauncherSections(contents)
+	if err != nil {
+		return nil, fmt.Errorf("migrationDecode: %w", err)
+	}
+	launcherSections, err := launcherSection(sections, "launcher")
+	if err != nil {
+		return nil, fmt.Errorf("migrationSection: %w", err)
+	}
+	mergeLauncherSections(launcherSections, e.legacySections)
+	encoded, err := encodeLauncherSections(sections)
+	if err != nil {
+		return nil, fmt.Errorf("migrationEncode: %w", err)
+	}
+	return encoded, nil
+}
+
+func decodeLauncherSections(contents []byte) (map[string]any, error) {
 	sections := make(map[string]any)
-	contents, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
+	if len(contents) == 0 {
 		return sections, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("configRead: %w", err)
-	}
-	err = toml.Unmarshal(contents, &sections)
+	err := toml.Unmarshal(contents, &sections)
 	if err != nil {
 		return nil, fmt.Errorf("configDecode: %w", err)
 	}
@@ -123,26 +130,18 @@ func launcherSection(sections map[string]any, name string) (map[string]any, erro
 	return fields, nil
 }
 
-func saveLauncherSections(path string, sections map[string]any) error {
+func encodeLauncherSections(sections map[string]any) ([]byte, error) {
 	var encoded bytes.Buffer
 	err := toml.NewEncoder(&encoded).Encode(sections)
 	if err != nil {
-		return fmt.Errorf("configEncode: %w", err)
+		return nil, fmt.Errorf("configEncode: %w", err)
 	}
 	var document struct {
 		Launcher launcherSettings `toml:"launcher"`
 	}
 	err = toml.Unmarshal(encoded.Bytes(), &document)
 	if err != nil {
-		return fmt.Errorf("launcherValidate: %w", err)
+		return nil, fmt.Errorf("launcherValidate: %w", err)
 	}
-	err = os.MkdirAll(filepath.Dir(path), 0o755)
-	if err != nil {
-		return fmt.Errorf("configMkdir: %w", err)
-	}
-	err = replaceLauncherConfig(path, encoded.Bytes())
-	if err != nil {
-		return fmt.Errorf("configReplace: %w", err)
-	}
-	return nil
+	return encoded.Bytes(), nil
 }

@@ -67,12 +67,14 @@ func (m *UserManager) ApplyVendorTransactions(
 	defer user.mutation.Unlock()
 	user.mu.Lock()
 	previousAccount := user.Account
+	previousDNAEarned := user.Stats.DNAEarned
 	previousPart := append([]Part(nil), user.Parts...)
 	affectedID := make([]uint64, 0, len(transactions))
 	affectedSet := make(map[uint64]struct{}, len(transactions))
 	purchasedPartIDs := make([]uint64, 0, len(transactions))
 	rollback := func() {
 		user.Account = previousAccount
+		user.Stats.DNAEarned = previousDNAEarned
 		user.Parts = previousPart
 	}
 	for _, transaction := range transactions {
@@ -158,6 +160,12 @@ func (m *UserManager) ApplyVendorTransactions(
 				rollback()
 				user.mu.Unlock()
 				return VendorTransactionResult{}, errors.New("vendor DNA overflow")
+			}
+			err := addDNAEarned(&user.Stats, price)
+			if err != nil {
+				rollback()
+				user.mu.Unlock()
+				return VendorTransactionResult{}, fmt.Errorf("vendorDNA: %w", err)
 			}
 			part.MarketStatus = PartMarketBuyback
 			part.BuybackExpiresAt = time.Now().Add(buybackLifetime).Unix()

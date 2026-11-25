@@ -14,6 +14,7 @@ import (
 const maximumVisitedPolygon = 2048
 const PursuitTimeout = 8 * time.Second
 const pursuitProjectionDistance = 12
+const behaviorObstacleEdgeLimit = 32
 
 // PlayerPursuitDestination retains the NPC center for ordinary pursuit. When
 // that center is inside a collision blocker, approach a reachable contact in
@@ -218,8 +219,20 @@ func AdvancePursuitPath(
 }
 
 type PursuitPathStep struct {
-	Position game.Vec3
-	Waypoint game.Vec3
+	Position   game.Vec3
+	Waypoint   game.Vec3
+	Traversals []basenavigation.Traversal
+}
+
+// PursuitRoute retains the corridor for one movement toward a fixed goal.
+type PursuitRoute struct {
+	mesh             *basenavigation.Mesh
+	path             basenavigation.Path
+	source           game.Vec3
+	target           game.Vec3
+	topologyRevision uint64
+	pointIndex       int
+	planLayer        uint8
 }
 
 // Return the same next corridor point used to advance the server actor, so
@@ -227,6 +240,42 @@ type PursuitPathStep struct {
 func AdvancePursuitPathStep(
 	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
 	footprintRadius float32, travel float32, actors ...basenavigation.ActorNavigation,
+) (PursuitPathStep, error) {
+	step, err := advancePathStep(mesh, source, target, footprintRadius, travel, false, nil, actors...)
+	if err != nil {
+		return PursuitPathStep{}, fmt.Errorf("pursuitWalk: %w", err)
+	}
+	return step, nil
+}
+
+// AdvanceTraversalPathStep is reserved for movement owners that commit and
+// publish the returned semantic teleports. Other path callers remain walk-only.
+func AdvanceTraversalPathStep(
+	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
+	footprintRadius float32, travel float32, actors ...basenavigation.ActorNavigation,
+) (PursuitPathStep, error) {
+	step, err := advancePathStep(mesh, source, target, footprintRadius, travel, true, nil, actors...)
+	if err != nil {
+		return PursuitPathStep{}, fmt.Errorf("pursuitTraversal: %w", err)
+	}
+	return step, nil
+}
+
+func (e *PursuitRoute) Advance(
+	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
+	footprintRadius float32, travel float32, actor basenavigation.ActorNavigation,
+) (PursuitPathStep, error) {
+	step, err := advancePathStep(mesh, source, target, footprintRadius, travel, true, e, actor)
+	if err != nil {
+		return PursuitPathStep{}, fmt.Errorf("pursuitRoute: %w", err)
+	}
+	return step, nil
+}
+
+func advancePathStep(
+	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
+	footprintRadius float32, travel float32, isTraversalAllowed bool,
+	route *PursuitRoute, actors ...basenavigation.ActorNavigation,
 ) (PursuitPathStep, error) {
 	if mesh == nil || !zonegeometry.IsFinite(source) ||
 		!zonegeometry.IsFinite(target) ||
@@ -238,23 +287,54 @@ func AdvancePursuitPathStep(
 	if !isLayerFound {
 		return PursuitPathStep{}, errors.New("campaign pursuit layer unavailable")
 	}
-	path, err := mesh.CreatePath(
-		basenavigation.Vec3{X: source.X, Y: source.Y, Z: source.Z},
-		basenavigation.Vec3{X: target.X, Y: target.Y, Z: target.Z},
-		basenavigation.PathOptions{
-			ProjectionOptions: basenavigation.ProjectionOptions{
-				PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
+	topologyRevision := mesh.TopologyRevision()
+	maxObstacleEdges := 0
+	if route == nil {
+		route = &PursuitRoute{}
+	} else {
+		// A discretionary behavior can finish when it cannot find a short
+		// detour. Its route query runs while gameplay commands wait on the lock.
+		maxObstacleEdges = behaviorObstacleEdgeLimit
+	}
+	if route.mesh != mesh || route.source != source || route.target != target ||
+		route.planLayer != planLayer || route.topologyRevision != topologyRevision {
+		path, err := mesh.CreatePath(
+			basenavigation.Vec3(source), basenavigation.Vec3(target),
+			basenavigation.PathOptions{
+				ProjectionOptions: basenavigation.ProjectionOptions{
+					PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
+				},
+				MaxVisitedPolygon:  maximumVisitedPolygon,
+				MaxObstacleEdges:   maxObstacleEdges,
+				IsTraversalAllowed: isTraversalAllowed,
 			},
-			MaxVisitedPolygon: maximumVisitedPolygon,
-		},
-	)
-	if err != nil {
-		return PursuitPathStep{}, fmt.Errorf("campaignPursuitCreate: %w", err)
+		)
+		if err != nil {
+			return PursuitPathStep{}, fmt.Errorf("campaignPursuitCreate: %w", err)
+		}
+		*route = PursuitRoute{
+			mesh: mesh, path: path, source: source, target: target,
+			planLayer: planLayer, topologyRevision: topologyRevision,
+		}
 	}
 
-	position := basenavigation.Vec3{X: source.X, Y: source.Y, Z: source.Z}
+	position := basenavigation.Vec3(source)
 	waypoint := target
-	for _, point := range path.Points {
+	for route.pointIndex < len(route.path.Points) {
+		pointIndex := route.pointIndex
+		point := route.path.Points[pointIndex]
+		if pointIndex > 0 {
+			traversal := route.path.TraversalAt(pointIndex - 1)
+			if traversal.MarkerID != 0 {
+				*route = PursuitRoute{}
+				current := mesh.TraversalSegment(traversal.Source, traversal.Destination)
+				if !current.IsEnabled {
+					return PursuitPathStep{Position: game.Vec3(position), Waypoint: game.Vec3(position)}, nil
+				}
+				return PursuitPathStep{Position: game.Vec3(traversal.Destination), Waypoint: game.Vec3(traversal.Destination),
+					Traversals: []basenavigation.Traversal{traversal}}, nil
+			}
+		}
 		deltaX := point.X - position.X
 		deltaY := point.Y - position.Y
 		deltaZ := point.Z - position.Z
@@ -262,22 +342,48 @@ func AdvancePursuitPathStep(
 			deltaX*deltaX + deltaY*deltaY + deltaZ*deltaZ,
 		)))
 		if distance == 0 {
+			route.pointIndex++
 			continue
 		}
 		if travel >= distance {
+			if isTraversalAllowed {
+				traversal := mesh.TraverseSegment(position, point)
+				if traversal.MarkerID != 0 {
+					*route = PursuitRoute{}
+					if !mesh.IsSegmentClear(position, traversal.Source, planLayer) {
+						return PursuitPathStep{Position: game.Vec3(position), Waypoint: game.Vec3(position)}, nil
+					}
+					return PursuitPathStep{Position: game.Vec3(traversal.Destination), Waypoint: game.Vec3(traversal.Destination),
+						Traversals: []basenavigation.Traversal{traversal}}, nil
+				}
+			}
 			position = point
 			travel -= distance
+			route.pointIndex++
 			continue
 		}
 		scale := travel / distance
 		waypoint = game.Vec3{X: point.X, Y: point.Y, Z: point.Z}
-		position = basenavigation.Vec3{
+		next := basenavigation.Vec3{
 			X: position.X + deltaX*scale,
 			Y: position.Y + deltaY*scale,
 			Z: position.Z + deltaZ*scale,
 		}
+		if isTraversalAllowed {
+			traversal := mesh.TraverseSegment(position, next)
+			if traversal.MarkerID != 0 {
+				*route = PursuitRoute{}
+				if !mesh.IsSegmentClear(position, traversal.Source, planLayer) {
+					return PursuitPathStep{Position: game.Vec3(position), Waypoint: game.Vec3(position)}, nil
+				}
+				return PursuitPathStep{Position: game.Vec3(traversal.Destination), Waypoint: game.Vec3(traversal.Destination),
+					Traversals: []basenavigation.Traversal{traversal}}, nil
+			}
+		}
+		position = next
 		break
 	}
+	route.source = game.Vec3(position)
 	return PursuitPathStep{
 		Position: game.Vec3{X: position.X, Y: position.Y, Z: position.Z}, Waypoint: waypoint,
 	}, nil

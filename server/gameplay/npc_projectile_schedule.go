@@ -45,6 +45,7 @@ type campaignNPCProjectileSchedule struct {
 	run                         *abilityraknet.ProjectileRun
 	flight                      *campaignNPCProjectileFlight
 	volley                      campaignNPCProjectileVolley
+	isShotPending               bool
 	projectileSourcePosition    game.Vec3
 	projectileTargetPosition    game.Vec3
 	isProjectileTrajectoryFound bool
@@ -152,6 +153,7 @@ type campaignNPCProjectileVolley struct {
 	shotIndex              int
 	startTimestamp         uint64
 	retainedTargetPosition game.Vec3
+	targets                []zone.NPCTarget
 	plan                   zonenpc.AttackPlan
 }
 
@@ -290,6 +292,11 @@ func (e campaignNPCProjectileSchedule) resumeZelem(
 	if !isCurrent || !isEnemyFound || enemy.IsDefeated {
 		return nil, nil
 	}
+	if e.isShotPending {
+		return e.runtime.produceZelemShotWithVolley(
+			e.packet, e.sessionKey, e.generation, e.sourceObjectID, timestamp, e.volley,
+		)
+	}
 	profile, isProfileFound := zonenpc.ActionProfileForPlan(enemy.Plan)
 	if isProfileFound && profile.Family == zonenpc.ActionZelemRanged &&
 		profile.TeleportNormalDistance > 0 {
@@ -361,7 +368,7 @@ func (e campaignNPCProjectileSchedule) next() ([][]byte, error) {
 		)
 	} else if e.plan.Profile.AbilityName == "ZelemMarkSeeker" {
 		packets, err = e.runtime.producePolarisPhaseTransition(
-			e.packet, e.sessionKey, e.generation, e.sourceObjectID, timestamp,
+			e.packet, e.sessionKey, e.generation, e.sourceObjectID, e.plan.ActionGeneration, timestamp,
 			polarisNextGravityOrb,
 		)
 	} else if e.plan.Profile.AbilityName == "Puller" {

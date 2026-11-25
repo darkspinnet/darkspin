@@ -1,7 +1,276 @@
 # Changelog
 
+### 2026-11-22
+
+- #217 Restore Lumin's Charge Field recipient visuals, including its Overdrive effect, and retire them when recipients leave the aura.
+- #217 Use the correct attachment slot for SRS-42's Targeting Computer so its scanner effect can be removed without accumulating.
+
+### 2026-11-19
+
+- #215 Remove the guessed Infinity hazard circle that dealt 10% maximum-health damage on walkable ground.
+- #215 Allow Affliction Bolt casts without an enemy target and synchronize its turning flight and elevated caster return between server and client.
+- #216 Show Vex's Haste Field on its recipients and share its presentation with co-op players.
+- #216 Stop Pterodyne's stealth approach and pending fear when damage removes its stealth.
+- #216 Stop native movement and update cursor-facing for area basic attacks, and keep held targeted basics ahead of movement input.
+
+### 2026-11-17
+
+- Let players running DarkSpinner as administrator acknowledge the risk and remember their choice, with a reset in Config Advanced.
+- #213 Stop sampled hero and enemy projectiles at authored map blockers.
+- #214 Keep Herbipods in place during fear and let their attacks resume when targets return to range.
+- #214 Prevent Merak's killing blow from spawning another Blazer.
+- #214 Keep Astri defeated once the captain is killed.
+- #214 Keep Affliction Bolt active for its authored flight duration and let it home back to its caster when it has no eligible enemy.
+
+### 2026-11-15
+
+- #212 Let Cannonators pursue into their melee attack range.
+- #212 Keep dormant robots stationary until activation and wake Raytheoids when a visible hero damages them from outside aggro range.
+- #212 Restrict Corruptor replay encounters to Perceptory on the final mission of each difficulty.
+- #212 Send the controlling client a movement stop when Lumin starts a basic attack while moving.
+- #212 Keep enemies at their current positions when they lose a stealthed hero instead of teleporting them home.
+
+### 2026-11-13
+
+- #210 Restore Orcus’s three-second basic melee cooldown.
+- #210 Refresh movement and attack speed when Sporogenesis cleanses a slow.
+- #210 Let Savage use Wild Charge toward the cursor without an enemy target.
+- #210 Restore Savage’s Ally spawn and enrage animation timing and play a death animation when it is defeated.
+- #210 Let Titan’s basic attack hit enemies whose bounds overlap its area.
+- #209 Stop NPC pursuit when a hero enters Shadow Cloak and keep Ballistic Quadrakillers from turning during Virulent Vines.
+- #209 Keep destroyed Cryos Ecostabilizers solid for current players and late joiners.
+- #208 Make Cannonators close in for melee when their target is less than 8 units away and fire from 8 units or farther.
+- #207 Let Char’s Fire Tempest Basic hit a selected enemy that moves away from the cursor before impact.
+- #206 Keep Orion’s Lightspeed Haste stacks on one modifier and update active movement when his health-based speed changes.
+- #206 Synchronize Titan’s attack stop with the controlling client and resolve his basic attack from his position at impact.
+- #206 Resolve Ray Killer projectile hits as the rays travel.
+- #205 Limit automatic Sync Snapshots to one capture per category per connection and 512 MiB of retained ZIPs.
+- #205 Keep destroyed Warp Totem wreckage solid for current players and late joiners.
+- #204 Fill the extra health capacity when Meditron’s Reconstruct applies Reinforced.
+
+### 2026-11-11
+
+- Open the selected server’s download folder from the Admin Panel’s Log, Bug, and Snapshot tabs and save diagnostic files without a leading underscore.
+- #203 Use ordinary movement stops when NPCs finish walking or idle movement to reduce visible teleport snaps.
+- #203 Give destructible DNA drops a nearby landing outside the hero’s pickup radius when terrain allows.
+- #203 Let Char’s Fire Tempest pet look for targets again after an idle interval.
+- #202 Let Herbipods and Isotronic Laser Units fire when their first attack shares a deadline with the end of their entrance.
+- #202 Keep Shielded Grenadiers in their grenade stance while heroes stay in range and in front, and synchronize shield facing on setup.
+- #201 Bound NPC behavior detour searches that can stall gameplay and exhaust the local connection queue.
+- #200 Reduce gameplay stalls around active horde fences by reusing NPC movement routes and skipping gate routes that cannot improve an existing path.
+- #200 Check inward horde gate contact while heroes are moving so they can enter without sending another movement command.
+- #200 Restore Piercing Triped's ranked Thorn Nova projectile ring from build-103 ability data.
+- #200 Remove teleport packets from normal Charging Brute and fear-movement arrivals and from Sentry Drone firing.
+- #200 Make Dark Fiend bolts fire in the direction the creature is facing.
+- #200 Keep Sync Snapshot deletion evidence scoped to the affected object and connection so unrelated movement traces no longer get reported as the cause.
+
+### 2026-11-08
+
+- Fix server startup by loading Field Medic's maximum-health grant from its authored build-103 Activate callback instead of a nonexistent Tick callback.
+- #199 Initialize Pain Hounds with their scaled current and maximum health on the client before combat begins in campaign and Arena.
+- Track hero sleep, stun, root, and silence by exact modifier handle so dispels and expiry preserve other active effects.
+- Restore verified native root replacement and slow admission rules, preserving distinct casters while replacing their own prior slow instances.
+- Run verified numeric Lua attribute grants with native additive, percentage, best, and clamp operations, deriving the health capacity bonus from the installed modifier.
+- Track NPC sleep and roots and companion silence by exact modifier handle so expiry and dispels preserve surviving contributions.
+- Reject immune transferred sleep before publication, restore its damage-wake behavior, and apply build-103 Unique replacement across party members.
+- Reject immune Quantum State control effects before publishing their modifiers, and deliver accepted time-stop and transferred-debuff reactions immediately.
+- Track stun, silence, and banish by exact modifier handle so removing one effect preserves other active contributions.
+- Match build-103 time-stop admission and replacement rules, keeping Frozen presentation synchronized with dispels and surviving effects.
+- Share closed horde fences across server navigation and restore authored inward gate traversal for heroes, enemies, and companions, including paths already in motion.
+- Allow unrelated hero self buffs to coexist with independent stat grants, expiry, and cleanup, while preserving same-modifier replacement and stacking rules.
+- Interrupt active laser beams immediately after additional accepted stun, banish, and silence applications, preserving beams when the new control effect is rejected.
+- Keep verified Poison and Ruption Burn instances independent per NPC caster so overlapping applications retain their own damage and expiry.
+- Validate incoming hero navigation placement before voluntary deployment, use bounded validated-position recovery when available, and publish the same arrival position to the server and client.
+- Preserve trusted local control-panel sessions through loopback request validation, distinguish launcher-source rejections from account permission failures, and log local panel initialization failures.
+- Prevent concurrent local profile initialization from failing on SQLite read-to-write lock upgrades by reserving write transactions before schema inspection while retaining concurrent WAL readers.
+- Preserve existing dedicated TOML signing keys when the environment override is absent, retaining compatibility with automatically updated containers and including the legacy key file in backups.
+- Upgrade both launcher frontends from Vue v3.5.39 to v3.5.45 and Vite v7.3.6 to v7.3.7 to fix renderer XSS and development-server security alerts, and update the legacy launcher's source-map-js to v1.2.2.
+- Reduce the seeded chance of a Destructor ending on replay maps from 40% to 20%.
+- Disable Server configuration controls until the local server is ready, refresh them automatically after startup, and prevent client preference lookups from reopening the profile database during initialization.
+- Upgrade Darkspinner's source-map-js dependency from v1.2.1 to v1.2.2 to address a dependency security alert.
+- Separate tooltip rounding from combat scaling, preserving fixed fractional hits and formatting tooltip minimums with build-103's nearest-even conversion.
+- Preserve fractional damage through NPC difficulty, companion buffs, and area scaling so intermediate rounding cannot compound.
+- Upgrade Echo from v4.15.3 to v4.16.3 to address dependency vulnerabilities, including default client-IP spoofing and proxy identity forwarding, with its required Go 1.26 and supporting dependency updates.
+- Upgrade the PostgreSQL driver from pgx v5.7.6 to v5.9.2 to address three dependency security alerts.
+- Protect account XML responses against browser script execution with an explicit XML content type, disabled MIME sniffing, and a sandboxed content policy.
+- Expose Server Capacity in the local admin panel and authorize local Crogenitors as local server administrators without changing persisted roles or dedicated-server permissions.
+- Track companion buffs and health bonuses by exact modifier handle so repeated or stale expiry cannot remove a surviving contribution.
+- Preserve unrelated hero stat gains and signed penalties during modifier cleanup and rollback, and prevent retired effects from being restored after asynchronous failure.
+- Share energy-vulnerability stacks across peers with one target owner and the native cap of two stacks, including cleanup on dispel, death, and zone shutdown.
+- Store the server-wide player limit in the database, default new PostgreSQL settings to 100 and SQLite to 25, and let dedicated admins update the limit live from Admin Server.
+- Derive dedicated mode from the host entry point, require deployment environment settings without a darkspin.toml fallback, and store local server settings in the database while retaining client preferences in TOML.
+- Deliver Sleeping Cloud's authored new-action reaction for fresh admitted movement and committed character casts, retiring its field and owned sleep effects without releasing newer actions.
+- Apply the laser controller's modifier-added reaction immediately when Psistorm silence is admitted, removing active beams while preserving the controller.
+- Move bot matchmaking settings from TOML to the server database with fresh defaults, expose dedicated-server admin controls, and hide local Server settings for remote Crogenitors.
+- Extend recipient duration scaling to Arboreal Might and additional verified slows, stuns, vulnerability, poison, and burning effects, preserving buff refreshes and damage tick cadence.
+- Correct the boss chain-lightning shock's base duration from two to 2.5 seconds before recipient duration reductions.
+- Rename Config's Multiplayer tab to Server, move Matchmaking into Server, and move Spore settings into General.
+- #198 Restore Sage's Dendrone damage scaling from nearly flat damage to mirrored owner stats and a separate pet-damage bonus in campaign and Arena.
+- Apply recipient duration reductions to verified timed silence and snare modifiers, keeping server expiry and client duration aligned with build-103's one-millisecond minimum.
+- Release Stealther action reservations when cooldown or recovery scheduling fails so later attacks can resume.
+- Correct hero damage, healing, and their tooltips from a primary-stat baseline of -1 to build-103's MagicNumbers baseline of 8, and preserve the owner's explicit damage baseline for Sentry Drone attacks.
+- Change idle enemy walking from repeated position corrections to native waypoint movement, enabling authored idle speed and preserving interpolation between waypoint changes.
+- Run Strafe and Small Strafe's original Lua callbacks for destination choice, movement reduction, arrival distance, and cleanup instead of duplicated Go behavior decisions.
+- Include Orcus's active shield immunity in Lua sleep and silence admission and shared crowd-control checks, with independent expiry and renewal tracking.
+- Honor Overdrive's silence immunity through the same live hero contribution lookup used for poison immunity.
+- Resume interrupted NPC actions after live crowd-control removal instead of waiting for an obsolete expiry, and discard wakeups belonging to replaced actions.
+- Release failed Arcturus launch actions and fence Polaris phase handoffs and rollback against stale continuations so encounter polling can recover.
+- Release NPC pursuit reservations on slow-presentation or shield-ending failures and reject stale pursuit-to-attack handoffs.
+- Use consistent live hostile-target checks for hero and companion attack selection, admission, and basic impacts, rejecting friendly, unpublished, or pending-birth targets.
+- Let grounded companions pursue the next reachable enemy when a nearer target has no route ending within attack range.
+- Keep NPC melee windups bound to their selected target and check moving heroes at their current simulated position when the hit lands.
+- Preserve independently owned NPC slows through expiry and rollback, and allow stacking slows to apply freshly after their modifier is cleansed.
+- Retire accepted aura modifiers and their callbacks when NPC cleanses remove crowd control, keeping server status and client modifier removal together.
+- Deliver environmental damage to Sleeping Cloud's authored callback and cage/stealth reactions, including live clouds retained after their caster disconnects.
+- Change grounded companion follow and pursuit from straight-line server movement to navigation routes with path-based travel timing and authoritative arrival positions.
+- Include the blocking scenery marker, navigation footprint, and collision bounds in rejected movement diagnostics to help identify deployment lockups.
+- Use Sleeping Cloud and Psistorm's authored modifier admission callbacks with current NPC immunity contributions and game mode, including direct and aura-granted Unstoppable.
+- Run Sleeping Cloud's authored damage callback and track sleep per modifier so overlapping clouds and rejected applications cannot clear or borrow another cloud's sleep.
+- Run campaign Psistorm's authored aura callbacks with retained target state, preserving rejected silence requests until targets leave and keeping overlapping fields' silence independent.
+- Preserve accepted aura fields when an unrelated ability command is rejected.
+- Restore Omicron's approach toward distant targets and remove its unsupported five-second retreat pause.
+- Allow derived mutation agents to inherit wandering from their authored passive and combat behavior definitions.
+- Run the tutorial boss teleporter's authored entry callback with retained Lua state and current player control before accepting travel.
+- #197 Restore Orion's missing right blaster with a Fang redirect from its broken mesh reference to the matching installed mesh.
+- #196 Preserve lethal piercing-projectile death updates instead of losing them when death cancels the projectile, and reject defeated heroes' ability casts.
+- #196 Remove Mirror Beetle copies when their original dies by linking them to the existing owner-death cleanup.
+- #196 Change Ray Killer attacks from a fixed seven-ray fan to one ray per eligible target in range.
+- #196 Include enemy bounding spheres in Meteor Strike's area targeting instead of requiring their centers to be inside the blast.
+- #196 Remove unsupported Arcturus visibility changes during flight so its native launch animation controls presentation.
+- #195 Preserve Polaris's selected projectile attack through stun and pursuit recovery, and release failed attacks instead of leaving the boss stuck.
+- #195 Send native hero teleports for Teleport Gun instead of updating only the displayed object fields.
+- #195 Include actor footprints in Sprout's range check and honor authored pursuit instead of repeatedly rejecting valid edge-of-range attacks.
+- #195 Move launcher log writes off gameplay dispatch, with bounded buffering and report/shutdown flushes, to prevent slow disk writes from stalling combat.
+- #194 Restore administrator command access by default for local play; only dedicated servers require an account status above 250.
+- #194 Restore Temporal Siphon's authored base cooldown and power cost instead of allowing repeated free casts.
+- #194 Synchronize Orion's health-based movement and attack haste with the client and teammates, preserving it through temporary slow updates.
+- #194 Restore Pain Hounds' owner-primary-stat damage scaling and separate pet-damage bonus in campaign and Arena.
+- #193 Keep Sentry Drone stationary through its full firing release instead of resuming owner-follow at projectile launch.
+- #193 Correct Swift Slasher wander movement from premature one-second advances and hero-follow goals to elapsed-time movement along retained wander destinations, with authored ranked durations.
+
+### 2026-11-07
+
+- Change randomized replay endings from mission-number selection to a seeded 40% chance of the destination planet's Destructor without pre-waves and a 60% chance of a captain.
+- Skip captain pre-waves when a Destructor is selected, including Apocalypse 17-4 Polaris and randomized replays, and start its normal cinematic and introduction immediately.
+- Fix scenario login tokens to use the account's current credential revision so newly created administrator profiles can authenticate.
+- Add native-input command regression scenarios with isolated admin fixtures, fresh reply and gameplay-effect checks, diagnostic artifact checks, and explicit gaps for unobserved native commands.
+- #192 Restore owner-stat scaling for Char's Elemental Guardian attacks and Enrage in campaign and Arena.
+- #192 Apply Undermind burn damage with its authored Mind coefficient and mission difficulty scaling.
+- #192 Play Reparatrons' authored wake-up animation before combat begins.
+- #192 Enable immediate homing for Polaris's missiles and resolve their hits along the tracked flight instead of the initial straight-line timer.
+- #192 Prevent objective scripts from exhausting their memory allowance merely by handling repeated events.
+- Process queued gameplay commands before recurring world updates and NPC recovery, and explain administrator-access or missing-mission failures for in-game commands.
+- #191 Preserve Arcturus turret controllers through hero death, retire their effects on session teardown, and correct turret entrance timing, grounded collision, opposing beams, and initial Scarab spawn delay.
+- #191 Preserve TwinLaser effect ownership through hero death so scheduled cleanup removes the boss's beam effects.
+- #191 Restore Meditron's targeted basic-attack homing and Sentry Drone's owner-stat, pet-bonus, and Overdrive damage scaling.
+- #191 Remove self-detonated Exploder Scarabs after 100 ms instead of retaining spent bombs for about 15 seconds.
+- Let newly eligible higher-priority NPC idle behaviors interrupt active idle movement with cleanup before replacement.
+- Execute authored FollowStrafe through TargetTooFar, including Scaldron Copter's approach, with separate cooldowns and attack-range interruption.
+- Correct NPC strafing from object-follow goals to exact lateral goals while facing the target.
+- Fix a server compilation error in NPC idle animation pause timing.
+- Dispatch authored NPC combat-idle and passive movement through resolved AI definitions, with separate conditional cooldowns and cleanup when attacks, death, resurrection, or disconnects interrupt movement.
+- Show Horde Incoming on campaign horde entry and immediately between waves, and Horde Defeated when the encounter completes and its fences open.
+- Set static campaign 2-4's four horde waves to explicit Strafing Drakon, Arachno Striker, Chrono Striker, and Magnetic Master rosters, with one Mutation Agent on the final wave.
+- Set static campaign 2-3 horde waves to 6 Robo-bombers, then 2 Raytheoids, then 4 Robo-bombers and 4 Sting Raiders with one Mutation Agent.
+- Set static campaign 2-1 horde waves to 6, 6, and 8 Dynospheres, then 6 Dynospheres with one Mending Tanglid and one Mutation Agent.
+- Reduce horde lieutenant allowance to a 30% chance per wave with a maximum of one, configurable separately from ordinary map population in zone rules.
+- Keep campaign Mutation Agent encounters at four waves by default; replays use two waves with seeded 80% third-wave and conditional 50% fourth-wave chances, spawning the agent on the final wave.
+- Increase the default initial boss add count from 2 to 4.
+- Lower the default Mutation Agent minimum chain level from 7 to 4 (1-4).
+- Increase the default zone population from 15 to 25 enemies per section.
+- Move admin-panel remote diagnostic downloads from darkspin/bugs/server-downloads to darkspin/downloads, grouped in stable server folders without random suffixes.
+- #190 Prevent catalyst moves, drops, and pickups from leaving Health or Power above reduced capacity and disconnecting the client.
+- #190 Fix Proximity Mine placement failing when pursuit used a timestamp older than its admitted movement state.
+- #190 Preserve Haster's death animation when a queued attack would otherwise overwrite it.
+- #190 Resolve mission-item Create Detail requests against collected mission loot and preserve their detail status through checkpoints and reward claims.
+- Move gameplay tuning from blanket Server Rules controls to server-embedded JSON defaults with separate campaign and replay mission overrides and checkpointed zone rules.
+- Reduce the default pause between horde waves from 1500 ms to 500 ms.
+- Clear defeated mobs' combat statuses and remove their active status modifiers across all co-op players, including Electro Swath's reduced healing and stun effects, while preserving corpse and resurrection lifecycles.
+- Extend launcher campaign progress from the first 24 missions to all 72, displaying Invasion as 7-1 onward and Apocalypse as 13-1 onward with the correct planet names.
+- Stagger campaign player and AI Companion beam-in by group slot at 200 ms intervals, keeping heroes hidden and protected until their entry.
+
+### 2026-11-06
+
+- Make replay endings use the randomized destination planet's difficulty-appropriate destructor or Corruptor on x-4 missions and the destination map's captain otherwise.
+- Require a captain at every non-x-4 static campaign ending and the planet's destructor or Corruptor at every x-4 ending.
+- Correct 11-4's first-clear boss from the Rezzer captain to rank-two Nashira.
+- #189 Keep Nashira's two-duplicate limit across hero deaths and concurrent co-op attacks, and initialize Shadow Toss lob motion.
+- #189 Preserve NPC combat targets and combat movement speed when charge or stealth state changes.
+- #189 Scatter equipment and catalysts around their source, reserve in-flight landing positions, and allow floor projection from elevated drop sources.
+- #189 Match DNA amount randomization to build 103's continuous random range.
+- #188 Repair eligible Cyber corpses without requiring a physics-catalog entry, and include Mending Tanglid captains in fleeing behavior.
+- #188 Restore Savage Ally stat scaling and apply PetDamage as a separate bonus for attacks and Charge.
+- #188 Restrict destructor encounters to x-4 missions and preserve Carrion Maw's primary melee reach.
+- #188 Publish Ghostly aura shaders on entry and exit, and clear stale combat stopping distances during drone orbits.
+- #185 Keep one Mutation Agent sphere visible when it switches between idle and firing.
+- #186 Prevent a client crash when continuing a campaign with an AI Companion in a slot vacated by a player.
+- #184 Refill Health and Power to their catalyst-adjusted maximums when continuing a campaign, and restore Power on damaging hits with Power Leech.
+- #184 Refresh Suppression from proximity and publish the Strangling Briars slow when each pulse lands.
+- #184 Keep Blastopod missiles alive until contact or range exhaustion, and stop Ghostly Tracker charges without a teleport.
+- #184 Update Invincitron's orbit without restarting its mover each step, and restore the authored Sentry Drone Laser muzzle effect.
+
+### 2026-11-05
+
+- #183 Move remote server maintenance notices into the yellow Server status, with details on hover or keyboard focus.
+- Let Omicron release its cage and retreat after taking enough direct damage, and have its repair drone orbit while healing.
+- #182 Let Tree of Life heal nearby players and AI Companions in either direction by treating members of the same campaign party as allies.
+- #180 Fix Frigid Caverns loading when Toxic Fungus must be removed from a teleporter without spawning a replacement.
+- Make campaign AI Companions target the enemy holding a teammate in a cage so they can free them through combat.
+- #181 Swap Mutation Agent models only when the firing model starts or stops, removing the outgoing model first.
+- #181 Let Invincitron's drone interpolate ordinary orbit movement and face along its path.
+- #181 Let Nomad Shielders lower their shield and reposition when a target leaves attack range.
+- #181 Randomize ordinary elite affixes across the eligible pool for the mission difficulty.
+- #181 Show the gold Crogenitor Archive Obelisk medal in the Objectives Log as soon as it is earned.
+- #181 Resolve Raytheoid laser damage as the projectile passes through each target.
+
+### 2026-11-04
+
+- Compress completed daily server logs into ZIPs available from the Control Panel, with seven-day retention.
+- Raise Control Panel diagnostic downloads from 64 MiB to 256 MiB and stream files from the server.
+- #176 Fix Meditron's Sentry Drone tooltip damage growing on repeated refreshes while preserving pet-damage bonuses.
+- #176 Interrupt existing hero attacks and channels when sleep begins, apply the sleep modifier after movement corrections, and prevent delayed toss release from resetting the sleeping hero's animation.
+- #176 Synchronize Meditron's Sentry Drone firing pose with its projectile origin and hold that pose through the shot's windup.
+- #176 Match Invincitron drone movement speed to its orbit, publish orbit poses, and keep laser targeting from replacing its movement goal.
+- #176 Add Mutation Agent firing-model effects after the authored windup and restore the idle model when the beam ends.
+
+### 2026-11-03
+
+- #174 Resume Pterodyne melee pursuit after its scare recovery while keeping Stealth Attack on its separate cooldown.
+- #174 Validate Vampiric Lurcher jump landings without requiring a straight walking corridor, preventing repeated stationary jump cycles around ground-path bends.
+- #174 Publish Ghostly Tracker's charge speed and disabled repulsion to the client and restore them on completion or cancellation, including interrupted Shade Drifter charges.
+- #175 Resolve Arachno Terror's homing fear projectile against travelled collision segments and its range limit instead of moving the hit-check endpoint to the hero's current position.
+- Show a chat explanation and log the technical error when a Sync Snapshot command fails unexpectedly instead of returning a silent command error.
+- Disable Darwin amd64 and arm64 builds for unstable artifacts.
+- #173 Validate NPC pursuit before publishing movement and back off blocked routes instead of repeatedly restarting the chase; include blocked-route and melee-miss details in server snapshots.
+- Remove the embedded Go runtime from Fang and move scenario control and remote `/bug` ZIP collection into Darkspinner to free client address space, including capture support in detached game supervisors without a launcher window or local server.
+- Reduce Fang's always-mapped mod path storage by roughly 16 MiB and avoid temporary heap copies for common diagnostic packet formatting, received application messages and single-buffer Winsock captures.
+- #171 Refresh NPC silence through existing modifier updates instead of repeated creation packets.
+- #171 Resolve Blastopod rocket damage against travelled homing segments instead of a fixed launch-to-target timer.
+- #171 Preserve Dashing Brute charge progress when redirecting toward a moving target.
+- #171 Match Skar Beta and Gamma template names to their authored variants so Beta has Soul Link and Gamma has Phantom Charge.
+- #171 Prevent resurrection sources from reviving Sau the Electrocutioner after his defeat.
+- #171 Replace Healing Sprite ground-style follow with authored short flying steering goals at 200 ms intervals, preserving its healing pause.
+- Group Feature actions into separate sections, align new and repeated password fields on one row, and remove the password-session explanation.
+- #169 Recover restart/update admission after stable startup under older dedicated supervisors that cannot publish maintenance outcomes, while preserving manual maintenance holds and current supervisor validation.
+- Accept build 103's bit-31 item-detail identifiers so Create Detail requests resolve owned parts instead of failing with part not found.
+- Log credential-free account HTTP request and response-delivery metadata to diagnose login callback timeouts after successful authentication.
+- Write dedicated server and supervisor output to UTC daily files under darkspin/logs/logs, retaining seven daily logs and expiring trace and bug artifacts after seven days at startup and midnight.
+- Read the latest daily server log directly with mage deployment:logs instead of Docker console logs.
+- Add remote Crogenitor password changes to Feature with current password verification, matching new-password fields, and an option to save the new password in the launcher.
+- Move local and remote Crogenitor deletion from Actions into the control panel Feature tab, preserving confirmation and Shift-based local connection deletion.
+- Refresh retained maintenance banners after closing the control panel so reopened servers clear the warning and stale launch blocking automatically.
+- Keep PLAY REMOTE disabled with a STARTING label from the launch request until client startup completes, preventing a brief misleading re-enable before running controls appear.
+- #170 Add a control-panel close button and open Manage by default when entering Admin.
+- #170 Separate Diagnostic snapshots from bugs and logs, with newest-first ordering and date-based pagination.
+- #170 Add audited administrator editing of user status and Allow IP, with rank protection, credential revocation, and gameplay disconnection.
+- #170 Enable manual update checks from the configured bootstrap source without requiring a supervisor-managed server, and show unsupported checks explicitly.
+    - #169 Show remote server Maintenance status and its reason in the launcher before starting the client, block player launches while maintenance is active, and keep administrator panel access available.
+    - #169 Show maintenance login-rejection details when the server includes a deadline, with a translated fallback when no maintenance reason is supplied.
+- #169 Preserve server login-rejection details across interleaved TCP connections and identify launcher-requested login exits instead of reporting an unknown diagnosis.
+
 ### 2026-11-02
 
+- Widen the Manage update card and adapt status cards to narrow panels so update-check status remains readable beside its button.
 - #165 Prevent delayed recovery of older commands from canceling Quantum Superposition or resetting newer accepted abilities and movement.
 - #163 Include native exception reports and minidumps created or changed since client launch in automatic crash ZIPs, preserving ordinary logs when a native report is unavailable.
 - #162 Reduce campaign NPC polling allocations by filtering hazard sources before copying and using compact security, combat-presence, and AI-target snapshots.
@@ -801,7 +1070,6 @@
 - Resolve teleport endpoints from all seeded selected marker definitions instead of filtered director placements, preserving full IDs, later-selected duplicate overwrites and missing-destination behavior.
 - Retain authored catalyst noun modifier identity and line-bonus tuning in content.db, exposing both to pickup and effect consumers without changing current effect calculations.
 - Route campaign named events by full simulator event hash across selected live listener owners, retaining duplicate subscriptions, empty dispatches and native swap-removal on owner destruction.
-
 - Separate scaled actor navigation footprints from unscaled noun spawn radii, retaining actor navigation layers across movement and restore while preserving combat footprints.
 - Retain authored NPC AI graphs and gambit overrides, initialize the first start phase without RNG, and preserve node/gambit cursors through version-6 checkpoints without inferring phase execution behavior.
 - Select navigation layers from imported NavPower tuning radii with the native backward scan, including oversized actors and the Arena radius cap.
@@ -1013,7 +1281,6 @@
 - Change Sage's Tree of Life from five repeated growth stages and a six-second lifetime to one full-growth effect and an eight-minute lifetime, playing its disappearance effect only at expiry and retaining the tree after a hero falls.
 - Hold mission equipment pickups until successful completion, forfeiting them on abort or squad defeat and preventing reconnects or checkpoint restoration from recovering lost loot.
 - Change Space Barracudas from overlapping teleport loops to one opening blink followed by ranged attacks, choosing reachable landings around the target with a preference for its rear.
-
 - Correct enemy damage scaling from stat plus 1 to the authored stat minus 8, reducing inflated early-campaign hits while preserving hero damage.
 - Preserve separate current and maximum health and energy through reconnects, checkpoint restoration, and party snapshots so recovered bars do not exceed 100% and keep flashing.
 - Make sphere teleporters transfer heroes immediately once their collision footprint fits inside, and keep each gate inactive while enemies remain within roughly three Blitz collision lengths.
@@ -1253,6 +1520,5 @@
 - Change Invincitron's hover drone from remaining at its owner's position to circling above him, with its firing position following the same orbit.
 - Restore Nashira's Shadow Panic shriek on her melee/lob attack paths, with timed nearby fear, a fifteen-second cooldown, and normal attacks resuming after the cast.
 - Change Nashira illusion deaths from the full boss death animation to a brief duplication-effect disappearance; preserve the real boss's death sequence.
-
 - Fix boss-summoned Exploder Scarabs failing damage and explosion processing because they were incorrectly treated as boss-wave actors.
 - Change Laser Tank beams from following heroes to fixed placement anchors, with explicit effect cleanup when firing ends or is interrupted.

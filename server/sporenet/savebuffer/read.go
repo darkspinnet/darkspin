@@ -192,6 +192,28 @@ func (e *Repository) Create(ctx context.Context, record sporenet.UserRecord) (in
 	return userID, nil
 }
 
+// CreateRegistered preserves the registration boundary through the synchronous gate.
+func (e *Repository) CreateRegistered(ctx context.Context, record sporenet.UserRecord) (int64, error) {
+	err := e.acquire(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("registrationGate: %w", err)
+	}
+	defer e.release()
+	registrationRepository, isRegistrationAvailable := e.store.(sporenet.UserRegistrationRepository)
+	if !isRegistrationAvailable {
+		userID, createErr := e.store.Create(ctx, record)
+		if createErr != nil {
+			return 0, fmt.Errorf("registrationLegacy: %w", createErr)
+		}
+		return userID, nil
+	}
+	userID, err := registrationRepository.CreateRegistered(ctx, record)
+	if err != nil {
+		return 0, fmt.Errorf("registrationStore: %w", err)
+	}
+	return userID, nil
+}
+
 func (e *Repository) DeleteByLoginName(ctx context.Context, loginName string) error {
 	err := e.acquire(ctx)
 	if err != nil {

@@ -6,10 +6,12 @@ import (
 	"fmt"
 
 	"github.com/darkspinnet/darkspin/server/sporenet"
+	"github.com/jmoiron/sqlx"
 )
 
 // SavePlayerStats updates the hot combat-stat row without rewriting the user's
 // creatures, equipment, rewards and other unrelated profile collections.
+// DNA earnings belong to full reward saves so the balance and earnings commit together.
 func (e *Repository) SavePlayerStats(ctx context.Context, userID int64, stats sporenet.PlayerStats) error {
 	if ctx == nil {
 		return errors.New("nil context")
@@ -54,6 +56,29 @@ func (e *Repository) SavePlayerStats(ctx context.Context, userID int64, stats sp
 	}
 	if affected != 1 {
 		return fmt.Errorf("statMissing: %w", sporenet.ErrUserNotFound)
+	}
+	return nil
+}
+
+func ensureDNAEarnedColumn(ctx context.Context, tx *sqlx.Tx) error {
+	var count int
+	err := tx.GetContext(ctx, &count, `SELECT COUNT(*) FROM pragma_table_info('user_stat') WHERE name = 'dna_earned'`)
+	if err != nil {
+		return fmt.Errorf("columnCheck: %w", err)
+	}
+	if count != 0 {
+		return nil
+	}
+	result, err := tx.ExecContext(ctx, `ALTER TABLE user_stat ADD COLUMN dna_earned BIGINT NOT NULL DEFAULT 0`)
+	if err != nil {
+		return fmt.Errorf("columnAdd: %w", err)
+	}
+	affectedCount, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("columnAffected: %w", err)
+	}
+	if affectedCount < 0 {
+		return errors.New("negative DNA column affected count")
 	}
 	return nil
 }

@@ -202,6 +202,7 @@ type zoneNPCDeathDefinition struct {
 	corpseFadeDelay            time.Duration
 	graphicsState              uint32
 	replacementNoun            string
+	replacementScale           float32
 	rotation                   raknet.Vector3
 	explosionEffectName        string
 	deleteDelay                time.Duration
@@ -423,13 +424,14 @@ func campaignNPCDeathDefinition(
 		isFixture:           isFixture,
 		isBoss:              snapshot.Plan.IsBoss || isDestructor,
 		isRemnantRetained:   isNightmareVine || isGraviticRemnant || isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isPipe || isScaldronRemnantRetained || replacementNoun != "",
-		isCollisionRetained: isGraviticRemnant || isBossVent,
+		isCollisionRetained: isGraviticRemnant || isBossVent || isWarpTotem || replacementNoun != "",
 		isDeathAnimationSuppressed: isIllusion || isNightmareVine || isGraviticRemnant ||
 			isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isNocturnaPlant || isToxicactusPlant || isStalagmite || isPipe || isScaldronPlant || replacementNoun != "",
 		ordinaryDeathAnimation: ordinaryDeathAnimation,
 		corpseFadeDelay:        deathPresentation.PresentationDuration,
 		graphicsState:          graphicsState,
 		replacementNoun:        replacementNoun,
+		replacementScale:       snapshot.Plan.RuntimeObjectScale(),
 		rotation: raknet.Vector3{X: snapshot.Plan.Rotation.X,
 			Y: snapshot.Plan.Rotation.Y, Z: snapshot.Plan.Rotation.Z},
 		explosionEffectName: explosionEffectName,
@@ -453,8 +455,8 @@ func (s campaignShockwaveStunExpiryStep) produce() ([][]byte, error) {
 	isCurrent := isFound && peerSession.generation == s.generation &&
 		peerSession.zone.NPCs() != nil
 	if isCurrent {
-		peerSession.zone.NPCs().ClearStun(
-			s.targetObjectID, s.stunExpiresAt,
+		peerSession.zone.NPCs().ClearStunModifier(
+			s.targetObjectID, s.run.instanceID,
 		)
 		peerSession.untrackCampaignNPCModifier(s.run)
 		s.runtime.registry.sessions[s.sessionKey] = peerSession
@@ -504,6 +506,11 @@ func (r campaignDamageRuntime) publishNPCStuns(
 		if err != nil {
 			return nil, fmt.Errorf("shockwaveStunRun: %w", err)
 		}
+		run.record = zoneeffect.Modifier{
+			InstanceID: run.instanceID, GUID: modifierID,
+			SourceObjectID: sourceObjectID, TargetObjectID: result.Damage.ObjectID,
+			Kind: zoneeffect.ModifierKindDebuff,
+		}
 		statusDuration := zonenpc.CrowdControlDuration(result.Snapshot.Plan, duration)
 		stunExpiresAt := r.npc.now().Add(statusDuration)
 		r.registry.mutex.Lock()
@@ -511,14 +518,20 @@ func (r campaignDamageRuntime) publishNPCStuns(
 		isCurrent := isFound && currentSession.generation == generation &&
 			currentSession.zone.NPCs() != nil
 		if isCurrent {
-			err = currentSession.zone.NPCs().ApplyStun(
-				result.Damage.ObjectID, stunExpiresAt,
-			)
-			if err == nil {
+			var reaction laserModifierReaction
+			var isAdmitted bool
+			reaction, isAdmitted, err = r.registry.admitLaserControlModifierLocked(&currentSession,
+				result.Damage.ObjectID, run.instanceID, sim.AbilityStatusKindStun, r.npc.now(), stunExpiresAt)
+			isCurrent = err == nil && isAdmitted
+			if isCurrent {
+				run.record.Duration = statusDuration
+				run.record.ExpiresAt = stunExpiresAt
 				err = currentSession.trackCampaignNPCModifier(run)
-			}
-			if err == nil {
-				r.registry.sessions[sessionKey] = currentSession
+				if err != nil {
+					currentSession.zone.NPCs().ClearStunModifier(result.Damage.ObjectID, run.instanceID)
+				} else {
+					r.registry.queueLaserControlReactionLocked(sessionKey, &currentSession, reaction)
+				}
 			}
 		}
 		r.registry.mutex.Unlock()
@@ -548,8 +561,8 @@ func (r campaignDamageRuntime) publishNPCStuns(
 			latestSession, isLatestFound := r.registry.sessions[sessionKey]
 			if isLatestFound && latestSession.generation == generation &&
 				latestSession.zone.NPCs() != nil {
-				latestSession.zone.NPCs().ClearStun(
-					result.Damage.ObjectID, stunExpiresAt,
+				latestSession.zone.NPCs().ClearStunModifier(
+					result.Damage.ObjectID, run.instanceID,
 				)
 				latestSession.untrackCampaignNPCModifier(run)
 				r.registry.sessions[sessionKey] = latestSession
@@ -580,7 +593,7 @@ func (r campaignDamageRuntime) publishNPCStuns(
 			latestSession, isLatestFound := r.registry.sessions[sessionKey]
 			if isLatestFound && latestSession.generation == generation &&
 				latestSession.zone.NPCs() != nil {
-				latestSession.zone.NPCs().ClearStun(targetObjectID, stunExpiresAt)
+				latestSession.zone.NPCs().ClearStunModifier(targetObjectID, run.instanceID)
 				latestSession.untrackCampaignNPCModifier(run)
 				r.registry.sessions[sessionKey] = latestSession
 			}
@@ -1138,12 +1151,8 @@ func applyCompanionAttackBuff(
 	ability sim.AbilityDefinition, plan zonecompanion.Attack,
 ) sim.AbilityDefinition {
 	damageScale := 1 + plan.DamageBuff + plan.EnergyDamageBuff
-	ability.MinimumDamage = float32(math.Floor(float64(
-		ability.MinimumDamage * damageScale,
-	)))
-	ability.MaximumDamage = float32(math.Ceil(float64(
-		ability.MaximumDamage * damageScale,
-	)))
+	ability.MinimumDamage *= damageScale
+	ability.MaximumDamage *= damageScale
 	attackScale := max(float32(0.05), 1+plan.AttackSpeed)
 	ability.HitDelay = time.Duration(float64(ability.HitDelay) / float64(attackScale))
 	ability.ReleaseDelay = time.Duration(
@@ -1198,17 +1207,7 @@ func (r campaignDamageRuntime) startCompanionAttacks(
 		return packets, nil
 	}
 	ability := r.npc.program.SupportHealerPetBasic
-	petDamage := float32(0)
-	if peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) {
-		petDamage = peerSession.binding.Creatures[peerSession.deployedCreatureIndex].PetDamage
-	}
-	damageRange, err := game.ResolveAbilityDamageRange(
-		game.AbilityDamage{
-			Minimum: ability.MinimumDamage, Maximum: ability.MaximumDamage,
-			Coefficient: ability.DamageCoefficient,
-		},
-		game.DamageProfile{PrimaryAttribute: petDamage, IsPrimaryAttributeFound: true},
-	)
+	damageRange, err := peerSession.sagePetDamageRange(ability)
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("companionDamageRange: %w", err)
@@ -1597,7 +1596,7 @@ func (e campaignCompanionAttackStep) hit() ([][]byte, error) {
 		return nil, nil
 	}
 	target, isTargetFound := peerSession.zone.NPCs().NPC(e.plan.TargetObjectID)
-	isHitValid := isTargetFound && !target.IsDefeated && target.HitPoint > 0 &&
+	isHitValid := isTargetFound && zoneability.IsHostileTarget(target) &&
 		companion.Position.Sub(target.Plan.Position).Length() <= e.plan.CenterRange
 	damage := e.ability.MinimumDamage
 	isCritical := false
@@ -1789,15 +1788,21 @@ func (r campaignDamageRuntime) publishTransition(
 			sessionKey, transition.bossStartError)
 	}
 	packets := make([][]byte, 0, len(transition.immediatePackets)+1)
+	if transition.stealthCleanupObjectID != 0 {
+		stealthPackets, stealthErr := r.npc.interruptStealtherDamage(
+			sessionKey, generation, transition.stealthCleanupObjectID, timestamp,
+		)
+		if stealthErr != nil {
+			return nil, fmt.Errorf("stealthDamage: %w", stealthErr)
+		}
+		packets = append(packets, stealthPackets...)
+	}
 	if transition.defeatedObjectID != 0 {
 		r.registry.mutex.RLock()
 		member, isMemberFound := r.registry.sessions[sessionKey]
 		r.registry.mutex.RUnlock()
 		if isMemberFound && member.generation == generation && member.zone != nil {
-			rules := zonenpc.DefaultAllyAlertRules()
-			if r.npc.allyAlertRuleSource != nil {
-				rules = r.npc.allyAlertRuleSource.AllyAlertRules()
-			}
+			rules := campaignZoneAllyAlertRules(member.zone)
 			deathErr := member.zone.NPCs().RecordAdditionalKitAllyDeath(transition.defeatedObjectID, rules)
 			if deathErr != nil {
 				return nil, fmt.Errorf("allyDeathStimulus: %w", deathErr)
@@ -1930,6 +1935,11 @@ func (r campaignDamageRuntime) publishTransition(
 	packets = append(packets, fearCleanupPackets...)
 	packets = append(packets, hasteCleanupPackets...)
 	packets = append(packets, healingCleanupPackets...)
+	corpsePackets, corpseErr := r.retireCorpseStatuses(sessionKey, generation, transition.defeatedObjectID)
+	if corpseErr != nil {
+		return nil, fmt.Errorf("transitionCorpse: %w", corpseErr)
+	}
+	packets = append(packets, corpsePackets...)
 	if len(transition.bossCompletionPacket) != 0 {
 		step := campaignBossCompletionStep{
 			runtime: r, sessionKey: sessionKey, generation: generation,
@@ -2516,6 +2526,7 @@ type campaignDamageTransition struct {
 	corruptorPortalRespawn       *campaignCorruptorPortalRespawnPlan
 	defeatedObjectID             uint32
 	fearCleanupObjectID          uint32
+	stealthCleanupObjectID       uint32
 	healingCleanupObjectID       uint32
 	sinkholeCleanupObjectID      uint32
 	experience                   uint32
@@ -2621,6 +2632,14 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 		return campaignDamageTransition{}, errors.New("campaign transition unavailable")
 	}
 	transition := campaignDamageTransition{}
+	if result.Damage > 0 && !result.IsDamageImmune && s.zone.NPCs().IsStealthed(result.ObjectID) {
+		target, isTargetFound := s.zone.NPCs().NPC(result.ObjectID)
+		_, isStealther := zonenpc.StealtherStealthProfile(target.Plan.NounName)
+		if isTargetFound && isStealther {
+			s.zone.NPCs().ClearStealth(result.ObjectID)
+			transition.stealthCleanupObjectID = result.ObjectID
+		}
+	}
 	if s.requestCampaignCorruptorPhase(result) {
 		transition.corruptorPhaseObjectID = result.ObjectID
 	}
@@ -2650,6 +2669,11 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 		transition.immediatePackets = append(
 			transition.immediatePackets, lifeStealPackets...,
 		)
+		powerStealPackets, err := s.applyEquippedPowerSteal(result.Damage)
+		if err != nil {
+			return campaignDamageTransition{}, fmt.Errorf("powerSteal: %w", err)
+		}
+		transition.immediatePackets = append(transition.immediatePackets, powerStealPackets...)
 		if healedAmount > 0 {
 			s.queueStatDelta(sporenet.PlayerStatDelta{
 				PVEHealing:         float64(healedAmount),
@@ -3132,6 +3156,11 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 				}
 				transition.immediatePackets = append(transition.immediatePackets, barrierPackets...)
 			}
+			alertPacket, alertErr := marshalCampaignHordeAlert(tutorialHordeDefeatedClientEventID)
+			if alertErr != nil {
+				return campaignDamageTransition{}, fmt.Errorf("hordeDefeated: %w", alertErr)
+			}
+			transition.immediatePackets = append(transition.immediatePackets, alertPacket)
 		}
 		if hordeTransition.NextWaveActorCount != 0 {
 			plans, err := s.planCampaignHordeFollowup(hordeTransition)
@@ -3140,6 +3169,13 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 			}
 			transition.hordePlans = plans
 			transition.hordeZone = s.zone
+			// Announce the next wave with the clearing hit, before the world
+			// timer's inter-wave delay. Spawn retries must not repeat the banner.
+			alertPacket, alertErr := marshalCampaignHordeAlert(tutorialHordeIncomingClientEventID)
+			if alertErr != nil {
+				return campaignDamageTransition{}, fmt.Errorf("hordeNextIncoming: %w", alertErr)
+			}
+			transition.immediatePackets = append(transition.immediatePackets, alertPacket)
 		}
 		if hordeTransition.IsComplete {
 			plans, packets, isStarted, err := s.admitCampaignGenericBossAfterHorde(
@@ -3301,6 +3337,7 @@ func campaignDeathTarget(target zoneNPCDeathDefinition) deathraknet.Target {
 		CorpseFadeDelay:        target.corpseFadeDelay,
 		GraphicsState:          target.graphicsState,
 		ReplacementNoun:        target.replacementNoun,
+		ReplacementScale:       target.replacementScale,
 		Rotation:               target.rotation,
 		ExplosionEffectName:    target.explosionEffectName,
 		CreatureType:           target.creatureType, IsCreatureTypeKnown: target.isCreatureTypeKnown,
@@ -4007,7 +4044,7 @@ func (s *gameplayPeerSession) removeCampaignPlasmaModifier(
 		return false
 	}
 	if run.kind == zoneability.PlasmaModifierShock && s.zone.NPCs() != nil {
-		s.zone.NPCs().ClearStun(run.targetID, run.expiresAt)
+		s.zone.NPCs().ClearStunModifier(run.targetID, run.modifier.instanceID)
 	}
 	delete(s.campaignPlasmaModifiers, run.targetID)
 	s.untrackCampaignNPCModifier(run.modifier)
@@ -4024,7 +4061,7 @@ func (s *gameplayPeerSession) stopCampaignPlasmaModifiers(pool *modifierPool) {
 		}
 		if run.kind == zoneability.PlasmaModifierShock &&
 			s.zone.NPCs() != nil {
-			s.zone.NPCs().ClearStun(targetID, run.expiresAt)
+			s.zone.NPCs().ClearStunModifier(targetID, run.modifier.instanceID)
 		}
 		s.untrackCampaignNPCModifier(run.modifier)
 		if run.modifier != nil && pool != nil {
@@ -4121,9 +4158,12 @@ func (r campaignDamageRuntime) publishPlasmaModifier(
 	isCurrent := isFound && currentSession.generation == generation &&
 		currentSession.zone.NPCs() != nil
 	var previous *campaignPlasmaModifierRun
+	reaction := laserModifierReaction{}
 	if isCurrent && plan.Kind == zoneability.PlasmaModifierShock {
-		err = currentSession.zone.NPCs().ApplyStun(targetObjectID, run.expiresAt)
-		isCurrent = err == nil
+		var isAdmitted bool
+		reaction, isAdmitted, err = r.registry.admitLaserControlModifierLocked(&currentSession,
+			targetObjectID, modifier.instanceID, sim.AbilityStatusKindStun, r.npc.now(), run.expiresAt)
+		isCurrent = err == nil && isAdmitted
 	}
 	if isCurrent {
 		previous, err = currentSession.installCampaignPlasmaModifier(run)
@@ -4131,10 +4171,10 @@ func (r campaignDamageRuntime) publishPlasmaModifier(
 	}
 	if !isCurrent && plan.Kind == zoneability.PlasmaModifierShock &&
 		currentSession.zone.NPCs() != nil {
-		currentSession.zone.NPCs().ClearStun(targetObjectID, run.expiresAt)
+		currentSession.zone.NPCs().ClearStunModifier(targetObjectID, run.modifier.instanceID)
 	}
 	if isCurrent {
-		r.registry.sessions[sessionKey] = currentSession
+		r.registry.queueLaserControlReactionLocked(sessionKey, &currentSession, reaction)
 	}
 	r.registry.mutex.Unlock()
 	if !isCurrent {
@@ -4159,8 +4199,8 @@ func (r campaignDamageRuntime) publishPlasmaModifier(
 			latestSession.untrackCampaignNPCModifier(previous.modifier)
 			if previous.kind == zoneability.PlasmaModifierShock &&
 				latestSession.zone.NPCs() != nil {
-				latestSession.zone.NPCs().ClearStun(
-					previous.targetID, previous.expiresAt,
+				latestSession.zone.NPCs().ClearStunModifier(
+					previous.targetID, previous.modifier.instanceID,
 				)
 			}
 			r.registry.sessions[sessionKey] = latestSession
@@ -4480,17 +4520,11 @@ func campaignNPCActionProfile(
 	}
 	hybridMeleeProfile, isHybridMeleeFound :=
 		zonenpc.ZelemBasicHybridMeleeProfile(plan.NounName)
-	if isHybridMeleeFound {
-		deltaX := targetPosition.X - plan.Position.X
-		deltaY := targetPosition.Y - plan.Position.Y
-		centerDistance := float32(math.Hypot(float64(deltaX), float64(deltaY)))
-		surfaceDistance := max(
-			float32(0), centerDistance-plan.ActorFootprintRadius()-
-				targetFootprintRadius,
-		)
-		if surfaceDistance <= hybridMeleeProfile.Range {
-			return campaignAffixActionProfile(plan, hybridMeleeProfile, true)
-		}
+	// Build 103 ZelemBasicHybrid.Phase checks the projectile gambit first
+	// at distance >= 8. Melee has its own shorter reach and pursues into it.
+	const cannonatorRangedDistance = 8
+	if isHybridMeleeFound && zonegeometry.Distance(plan.Position, targetPosition) < cannonatorRangedDistance {
+		return campaignAffixActionProfile(plan, hybridMeleeProfile, true)
 	}
 	specialTwoMeleeProfile, isSpecialTwoMeleeFound :=
 		zonenpc.CitadelSpecialTwoMeleeProfile(plan.NounName)
@@ -4799,20 +4833,31 @@ func (e campaignNPCAttackSchedule) hit() ([][]byte, error) {
 		return nil, nil
 	}
 	currentNPC, isNPCFound := current.zone.NPCs().NPC(req.objectID)
-	if isNPCFound && currentNPC.IsShieldActive && e.plan.Profile.AbilityName != "NomadShielderBash" {
+	if !isNPCFound || currentNPC.TargetObjectID != e.plan.TargetObjectID {
+		// This windup belongs to its captured target. A changed aggro target
+		// waits for the source-scoped next cycle rather than inheriting a hit.
+		runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	if currentNPC.IsShieldActive && e.plan.Profile.AbilityName != "NomadShielderBash" {
 		runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
 	currentTarget, isTargetFound := current.campaignNPCTarget(
-		req.generation, currentNPC.TargetObjectID,
+		req.generation, e.plan.TargetObjectID,
 	)
-	if !isNPCFound || !isTargetFound {
+	if !isTargetFound {
 		runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
 	currentPlan := e.plan
 	var impactPacket []byte
 	var err error
+	currentTarget, err = runtime.registry.sampleNPCTargetLocked(current.zone, currentTarget, runtime.now())
+	if err != nil {
+		runtime.registry.mutex.Unlock()
+		return e.fail("enemyHitTarget", err)
+	}
 	if req.kind == campaignNPCAttackSnipeMelee {
 		currentPlan, err = zonenpc.PlanAttackWithProfile(
 			currentNPC, currentTarget.ObjectID, currentTarget.Position,
@@ -5655,9 +5700,14 @@ func (e campaignNPCFirstActionStep) produce() ([][]byte, error) {
 		action.TargetPosition.X, action.TargetPosition.Y, action.TargetPosition.Z,
 		action.Profile.Range, action.Profile.MovementSpeed, pursuitGoalFlags,
 	)
-	err = e.runtime.pursuit.schedule(
-		e.packet, e.sessionKey, e.generation, e.objectID,
-		actionTimestamp, action.TargetPosition, action.Profile, arrival,
+	// The first authoritative path step publishes movement after it succeeds.
+	// Publishing a target-follow command here lets the client chase even when
+	// the next server step rejects that same route.
+	// Zero selects the live player target; nonzero IDs select NPC targets.
+	err = e.runtime.pursuit.scheduleActionCorrection(
+		e.packet, e.sessionKey, e.generation, e.actionGeneration, e.objectID,
+		0, actionTimestamp, action.TargetPosition, actionTimestamp,
+		action.Profile, arrival, e.runtime.now(), true, false,
 	)
 	if err != nil {
 		e.releaseAction(latest)
@@ -5667,12 +5717,7 @@ func (e campaignNPCFirstActionStep) produce() ([][]byte, error) {
 		)
 		return nil, nil
 	}
-	pursuitPacket, err := npcraknet.Pursuit(action)
-	if err != nil {
-		e.releaseAction(latest)
-		return nil, fmt.Errorf("enemyPursuitMarshal: %w", err)
-	}
-	return append(activationPackets, pursuitPacket...), nil
+	return activationPackets, nil
 }
 
 func (e campaignNPCFirstActionStep) releaseAction(
@@ -6194,7 +6239,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	}
 	defer spawnPresentationGuard.releaseUnlessCommitted()
 	for index, plan := range plans {
-		if zonenpc.IsAgentHealingChild(plan) {
+		if zonenpc.IsAgentHealingChild(plan) || zonenpc.IsArcturusTurret(plan) {
 			continue
 		}
 		npc, isNPCFound := npcSession.NPC(plan.ObjectID)
@@ -6271,6 +6316,9 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 		}
 		if isFirstAction && !isFloorWarpIntroduction &&
 			action.Profile.IsFirstAggroDurationKnown && (!isRetainedIntroduction || introTiming.IsNew) {
+			if action.Profile.AbilityName == "BurstShot" && npcSession.RootRemaining(plan.ObjectID, r.now()) > 0 {
+				action.Profile.IsFirstAggroFacingSuppressed = true
+			}
 			aggroPackets, err := npcraknet.FirstAggro(action, timestamp)
 			if err != nil {
 				npcSession.ReleaseAction(plan.ObjectID, owner)
@@ -6636,6 +6684,10 @@ func (campaignNPCActionRuntime) publishFirstAggro(
 }
 
 type campaignNPCModifierRun struct {
+	stealther          *campaignStealtherSchedule
+	teleportControl    *teleportControlState
+	transferredControl *transferredControl
+	companionSilence   *companionSilenceControl
 	fixtureBurn        *campaignFixtureBurnState
 	operativeCage      *operativeCageState
 	frogCage           *nomadFrogCage
@@ -6681,6 +6733,16 @@ func (r *campaignNPCModifierRun) isActive() bool {
 	return r.isCreated && !r.isReleased
 }
 
+// isOwned includes a pending allocation registered before packet publication.
+func (e *campaignNPCModifierRun) isOwned() bool {
+	if e == nil {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return !e.isReleased
+}
+
 func (r *campaignNPCModifierRun) release(pool *modifierPool) (bool, error) {
 	if r == nil {
 		return false, nil
@@ -6690,6 +6752,9 @@ func (r *campaignNPCModifierRun) release(pool *modifierPool) (bool, error) {
 	if r.isReleased {
 		return false, nil
 	}
+	r.teleportControl.clear()
+	r.transferredControl.clear()
+	r.companionSilence.clear()
 	err := pool.Release(r.instanceID)
 	if err != nil {
 		return false, fmt.Errorf("enemyModifierRelease: %w", err)
@@ -6727,7 +6792,9 @@ func (s *gameplayPeerSession) untrackCampaignNPCModifier(
 	if s == nil || run == nil || s.campaignNPCModifiers[run.instanceID] != run {
 		return
 	}
+	s.clearHeroControl(run.instanceID, run.record.TargetObjectID)
 	s.forgetHeroHealingReduction(run)
+	s.forgetHeroTimeRavagerSlow(run)
 	delete(s.campaignNPCModifiers, run.instanceID)
 }
 
@@ -6830,7 +6897,7 @@ func (s *gameplayPeerSession) stopCampaignNPCModifiers(pool *modifierPool) {
 			run.cancel()
 		}
 		if s.zone != nil && s.zone.NPCs() != nil {
-			s.zone.NPCs().ClearSlow(targetObjectID, run.expiresAt)
+			s.zone.NPCs().ClearSlowModifier(targetObjectID, run.modifier.instanceID)
 		}
 		if s.zone != nil && s.zone.Effect() != nil {
 			s.zone.Effect().Remove(run.modifier.instanceID)
@@ -6940,8 +7007,11 @@ func (s *gameplayPeerSession) stopCampaignNPCModifiers(pool *modifierPool) {
 		_, _ = run.modifier.release(pool)
 		delete(s.campaignNPCFears, targetObjectID)
 	}
+	s.heroControls = nil
 	s.enemySilenceExpiresAt = time.Time{}
 	s.enemySleepExpiresAt = time.Time{}
+	s.enemyStunExpiresAt = time.Time{}
+	s.enemyStunTargetObjectID = 0
 	s.enemyRootExpiresAt = time.Time{}
 	s.enemyRootTargetObjectID = 0
 	s.enemyFearExpiresAt = time.Time{}
@@ -7703,11 +7773,11 @@ func (r campaignNPCActionRuntime) produceHasterBuff(
 
 func isCampaignNPCSecondaryPursuit(abilityName string) bool {
 	switch abilityName {
-	case "CryosBasicChargeHeadbutt", "GhostlyBoltFlee", "DrainerMelee",
+	case "CryosBasicChargeHeadbutt", "GhostlyBoltFlee", "DrainerMelee", "ZelemBasicHybridMelee",
 		"NomadBioSpecialTwoJumpAttack", "CitadelSpecialTwo_Melee",
 		"Smash", "StealthAttack", "RezMelee", "FastSwipe",
 		"NomadSpecialOneCleave", "NomadSpacetimeAgent_Blink", "PositionFirePet",
-		"SupportFlee", "SupportFleeFacing",
+		"SupportFlee", "SupportFleeFacing", "OmicronApproach",
 		"Burrow", "Flee",
 		"VerdanthBasicPickyMelee", "VerdanthBasicPickyChargingAttack":
 		return true
@@ -7806,6 +7876,12 @@ func (r campaignNPCActionRuntime) commitHeroTargetDamage(
 	if targetSession == nil {
 		return hitPackets, sporenet.PlayerStatDelta{},
 			errors.New("enemy target session unavailable")
+	}
+	if damage.PreviousHitPoint > damage.HitPoint {
+		wakeErr := r.wakeHeroSleepLocked(peerSession, targetSession)
+		if wakeErr != nil {
+			return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("targetSleepWake: %w", wakeErr)
+		}
 	}
 	if damage.IsDefeated {
 		cleanupPackets, cleanupErr := r.retireNPCSupportTargetLocked(peerSession, targetSession.deployedObjectID)

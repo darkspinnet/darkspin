@@ -20,10 +20,10 @@ func (e fixedAllyAlertRules) AllyAlertRules() zonenpc.AllyAlertRules { return e.
 func (e campaignNPCActionRuntime) alertAllies(
 	instance *zone.Zone, plans []zonenpc.SpawnPlan, timestamp uint64,
 ) ([]zonenpc.SpawnPlan, error) {
-	if e.allyAlertRuleSource == nil {
+	if instance == nil {
 		return plans, nil
 	}
-	rules := e.allyAlertRuleSource.AllyAlertRules()
+	rules := campaignZoneAllyAlertRules(instance)
 	if !rules.IsEnabled {
 		return plans, nil
 	}

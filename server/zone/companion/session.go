@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/navigation"
+	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
@@ -19,61 +21,70 @@ const attackRangeTolerance = 0.25
 const minimumPursuitDuration = 50 * time.Millisecond
 
 type Actor struct {
-	ActorFootprint         *game.NavigationFootprint
-	UserID                 uint64
-	PeerGeneration         uint64
-	ObjectID               uint32
-	OwnerObjectID          uint32
-	Noun                   uint32
-	Position               game.Vec3
-	FootprintRadius        float32
-	AggroRadius            float32
-	HitPoint               float32
-	MaximumHitPoint        float32
-	DeathRevision          uint64
-	lifeRevision           uint64
-	BodyScale              float32
-	IsTargetable           bool
-	IsCombatant            bool
-	IsAttackDisabled       bool
-	IsSageCompanion        bool
-	IsAbilityControlled    bool
-	IsStationary           bool
-	IsFollowManaged        bool
-	IsIntangible           bool
-	AbilityAnimation       string
-	TargetObjectID         uint32
-	PursuitObjectID        uint32
-	PursuitPosition        game.Vec3
-	PursuitRevision        uint64
-	pursuitSource          game.Vec3
-	pursuitStartedAt       time.Time
-	pursuitDeadline        time.Time
-	isForcedPursuit        bool
-	CooldownEnd            time.Time
-	AttackReleaseEnd       time.Time
-	silenceExpiresAt       time.Time
-	silenceLeases          map[uint32]struct{}
-	silenceImmunity        float32
-	poisonImmunity         float32
-	DamageBuff             float32
-	EnergyDamageBuff       float32
-	AttackSpeed            float32
-	CooldownReduction      float32
-	MovementSpeedBuff      float32
-	movementModifierBuff   float32
-	movementModifierExpiry time.Time
-	MovementSpeed          float32
-	FollowDistance         float32
-	FollowRevision         uint64
-	IsFollowing            bool
-	followPlan             Follow
-	followStartedAt        time.Time
-	followDeadline         time.Time
-	followHoldUntil        time.Time
-	cinematicUntil         time.Time
-	cinematicRevision      uint64
-	cinematicHolds         map[uint64]time.Time
+	Navigation                navigation.ActorNavigation
+	navigationMesh            *navigation.Mesh
+	followPaths               []game.Vec3
+	pursuitPaths              []game.Vec3
+	ActorFootprint            *game.NavigationFootprint
+	UserID                    uint64
+	PeerGeneration            uint64
+	ObjectID                  uint32
+	OwnerObjectID             uint32
+	Noun                      uint32
+	Position                  game.Vec3
+	Facing                    game.Vec3
+	FootprintRadius           float32
+	AggroRadius               float32
+	HitPoint                  float32
+	MaximumHitPoint           float32
+	DeathRevision             uint64
+	lifeRevision              uint64
+	BodyScale                 float32
+	IsTargetable              bool
+	IsCombatant               bool
+	IsAttackDisabled          bool
+	IsSageCompanion           bool
+	IsAbilityControlled       bool
+	IsStationary              bool
+	IsFollowManaged           bool
+	IsIntangible              bool
+	AbilityAnimation          string
+	TargetObjectID            uint32
+	PursuitObjectID           uint32
+	PursuitPosition           game.Vec3
+	PursuitRevision           uint64
+	pursuitSource             game.Vec3
+	pursuitStartedAt          time.Time
+	pursuitDeadline           time.Time
+	isForcedPursuit           bool
+	CooldownEnd               time.Time
+	AttackReleaseEnd          time.Time
+	silenceExpiresAt          time.Time
+	silenceModifiers          map[uint32]time.Time
+	silenceLeases             map[uint32]struct{}
+	silenceImmunity           float32
+	poisonImmunity            float32
+	DamageBuff                float32
+	EnergyDamageBuff          float32
+	AttackSpeed               float32
+	CooldownReduction         float32
+	MovementSpeedBuff         float32
+	buffModifiers             map[uint32]Buff
+	maximumHitPointModifierID uint32
+	maximumHitPointBase       float32
+	movementModifierBuff      float32
+	movementModifierExpiry    time.Time
+	MovementSpeed             float32
+	FollowDistance            float32
+	FollowRevision            uint64
+	IsFollowing               bool
+	followPlan                Follow
+	followStartedAt           time.Time
+	followDeadline            time.Time
+	followHoldUntil           time.Time
+	cinematicUntil            time.Time
+	cinematicRevision         uint64
+	cinematicHolds            map[uint64]time.Time
 }
 
 func (e Actor) AcquisitionRange() float32 {
@@ -92,6 +103,9 @@ type Buff struct {
 }
 
 type Follow struct {
+	Waypoint              game.Vec3
+	IsWaypointKnown       bool
+	IsExact               bool
 	ObjectID              uint32
 	OwnerObjectID         uint32
 	Position              game.Vec3
@@ -120,6 +134,8 @@ type Attack struct {
 }
 
 type Pursuit struct {
+	Waypoint            game.Vec3
+	IsWaypointKnown     bool
 	ObjectID            uint32
 	TargetObjectID      uint32
 	Position            game.Vec3
@@ -130,6 +146,8 @@ type Pursuit struct {
 }
 
 type Session struct {
+	navigationTeleports    []NavigationTeleport
+	navigationMesh         *navigation.Mesh
 	aggroRangesByNoun      map[uint32]float32
 	movementModifierSource MovementModifierSource
 	actorFootprints        map[uint32]game.NavigationFootprint
@@ -245,18 +263,30 @@ func (e *Session) put(actor Actor, isRetained bool) error {
 		actor.cinematicRevision = current.cinematicRevision
 		actor.cinematicHolds = current.cinematicHolds
 		actor.lifeRevision = current.lifeRevision
+		actor.silenceExpiresAt = current.silenceExpiresAt
+		actor.silenceModifiers = current.silenceModifiers
+		actor.silenceLeases = current.silenceLeases
 		if actor.PeerGeneration != current.PeerGeneration {
 			actor.lifeRevision = e.nextLifeRevision()
+			actor.clearSilence()
 		}
 		if current.IsCinematicImmobilized(time.Now()) {
 			actor.Position = current.Position
 		}
 	} else if !isRetained {
 		actor.clearCinematic()
+		actor.clearSilence()
 		actor.lifeRevision = e.nextLifeRevision()
 	}
 	if actor.HitPoint <= 0 {
 		actor.clearCinematic()
+		actor.clearSilence()
+	}
+	if !isRetained && isFound && (actor.UserID != current.UserID ||
+		actor.PeerGeneration != current.PeerGeneration || actor.OwnerObjectID != current.OwnerObjectID ||
+		actor.Noun != current.Noun || actor.DeathRevision != current.DeathRevision ||
+		actor.HitPoint <= 0 || current.HitPoint <= 0) {
+		actor = clearActorBuffModifiers(actor)
 	}
 	if e.actorRevisions == nil {
 		e.actorRevisions = make(map[uint32]uint64)
@@ -268,6 +298,7 @@ func (e *Session) put(actor Actor, isRetained bool) error {
 	actor.FollowRevision = e.nextFollowRevision()
 	actor.clearPursuit()
 	actor.PursuitRevision = e.nextPursuitRevision()
+	actor = e.configureActorNavigation(actor)
 	e.actors[actor.ObjectID] = actor
 	return nil
 }
@@ -395,6 +426,7 @@ func (e *Session) SetHitPoint(
 	actor.HitPoint = hitPoint
 	if hitPoint == 0 {
 		actor.clearCinematic()
+		actor.clearSilence()
 		actor.clearFollow()
 		actor.FollowRevision = e.nextFollowRevision()
 		actor.clearPursuit()
@@ -516,8 +548,16 @@ func (e *Session) followActors(
 		if actor.MovementSpeed > 0 {
 			actorMovementSpeed = actor.MovementSpeed * movementScale(actor)
 		}
+		points, destination, pathErr := e.walkingPaths(actor, goal)
+		if pathErr != nil {
+			continue
+		}
+		travelDistance := distance - actorStopDistance
+		if len(points) != 0 {
+			travelDistance = walkingDistance(points, e.navigationMesh)
+		}
 		travelDuration := time.Duration(
-			float64((distance-actorStopDistance)/actorMovementSpeed) *
+			float64(travelDistance/actorMovementSpeed) *
 				float64(time.Second),
 		)
 		travelDuration = max(travelDuration, minimumPursuitDuration)
@@ -528,13 +568,15 @@ func (e *Session) followActors(
 			DesiredStopDistance:   actorStopDistance,
 			AttackTargetObjectID:  actor.TargetObjectID,
 			PursuitTargetObjectID: actor.PursuitObjectID,
-			Destination:           goal,
+			Destination:           destination,
 			TravelDuration:        travelDuration,
 			Deadline:              at.Add(travelDuration),
 			Revision:              actor.FollowRevision,
 		}
+		plan.Waypoint, plan.IsWaypointKnown = gateWaypointForPaths(points, e.navigationMesh)
 		follows = append(follows, plan)
 		actor.followPlan = plan
+		actor.followPaths = points
 		actor.followStartedAt = at
 		actor.followDeadline = at.Add(travelDuration)
 		actor.TargetObjectID = 0
@@ -644,9 +686,7 @@ func (e *Session) ReserveAttacks(
 		selectedDistance := float32(math.MaxFloat32)
 		selectedRange := float32(0)
 		for _, target := range targets {
-			if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 ||
-				target.Plan.IsFixture ||
-				target.Faction == zonenpc.FactionPlayerAligned {
+			if !zoneability.IsHostileTarget(target) || target.Plan.IsFixture {
 				continue
 			}
 			centerRange := attackRange + actor.ActorFootprintRadius() +
@@ -726,9 +766,7 @@ func (e *Session) ReserveActorAttack(
 	selectedDistance := float32(math.MaxFloat32)
 	selectedRange := float32(0)
 	for _, target := range targets {
-		if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 ||
-			target.Plan.IsFixture ||
-			target.Faction == zonenpc.FactionPlayerAligned {
+		if !zoneability.IsHostileTarget(target) || target.Plan.IsFixture {
 			continue
 		}
 		centerRange := attackRange + actor.ActorFootprintRadius() +
@@ -797,62 +835,36 @@ func (e *Session) ReservePursuits(
 			actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 || actor.IsCinematicImmobilized(at) {
 			continue
 		}
-		var selected zonenpc.Snapshot
-		selectedDistance := float32(math.MaxFloat32)
-		selectedStopDistance := float32(0)
-		for _, target := range targets {
-			if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 ||
-				target.Plan.IsFixture ||
-				target.Faction == zonenpc.FactionPlayerAligned {
-				continue
-			}
-			// The hit tolerance is an acceptance margin, not a destination.
-			// Stopping on its outer edge can round beyond the attack boundary
-			// and repeatedly reserve another minimum-duration pursuit.
-			stopDistance := attackRange + actor.ActorFootprintRadius() +
-				max(float32(0), target.Plan.ActorFootprintRadius())
-			distance := actor.Position.Sub(target.Plan.Position).Length()
-			maximumRange := aggroRadius
-			if actor.AggroRadius > 0 {
-				maximumRange = actor.acquisitionCenterRange(target.Plan.ActorFootprintRadius())
-			}
-			if distance <= stopDistance || distance > maximumRange ||
-				distance > selectedDistance {
-				continue
-			}
-			if distance == selectedDistance && selected.Plan.ObjectID != 0 &&
-				target.Plan.ObjectID > selected.Plan.ObjectID {
-				continue
-			}
-			selected = target
-			selectedDistance = distance
-			selectedStopDistance = stopDistance
-		}
-		if selected.Plan.ObjectID == 0 {
+		selection := e.selectPursuit(actor, targets, attackRange, aggroRadius, false)
+		if selection.target.Plan.ObjectID == 0 {
 			continue
 		}
+		selected := selection.target
+		selectedStopDistance := selection.stopDistance
+		source := actor.Position
+		points, destination := selection.paths, selection.destination
+		actorMovementSpeed := movementSpeed * movementScale(actor)
+		travelDistance := selection.distance - selection.stopDistance
+		if len(points) != 0 {
+			travelDistance = walkingDistance(points, e.navigationMesh)
+		}
+		travelDuration := time.Duration(
+			float64(travelDistance/actorMovementSpeed) *
+				float64(time.Second),
+		)
+		if travelDuration <= 0 && len(points) == 0 {
+			continue
+		}
+		travelDuration = max(travelDuration, minimumPursuitDuration)
 		if actor.IsFollowing {
 			actor.clearFollow()
 			actor.FollowRevision = e.nextFollowRevision()
 		}
-		source := actor.Position
-		delta := source.Sub(selected.Plan.Position)
-		destination := selected.Plan.Position.Add(
-			delta.Scale(selectedStopDistance / selectedDistance),
-		)
-		actorMovementSpeed := movementSpeed * movementScale(actor)
-		travelDuration := time.Duration(
-			float64((selectedDistance-selectedStopDistance)/actorMovementSpeed) *
-				float64(time.Second),
-		)
-		if travelDuration <= 0 {
-			continue
-		}
-		travelDuration = max(travelDuration, minimumPursuitDuration)
 		actor.PursuitObjectID = selected.Plan.ObjectID
 		actor.PursuitPosition = destination
 		actor.PursuitRevision = e.nextPursuitRevision()
 		actor.pursuitSource = source
+		actor.pursuitPaths = points
 		actor.pursuitStartedAt = at
 		actor.pursuitDeadline = at.Add(travelDuration)
 		e.actors[objectID] = actor
@@ -863,6 +875,8 @@ func (e *Session) ReservePursuits(
 			TravelDuration:      travelDuration,
 			Revision:            actor.PursuitRevision,
 		})
+		lastIndex := len(pursuit) - 1
+		pursuit[lastIndex].Waypoint, pursuit[lastIndex].IsWaypointKnown = gateWaypointForPaths(points, e.navigationMesh)
 	}
 	sort.Slice(pursuit, func(left int, right int) bool {
 		return pursuit[left].ObjectID < pursuit[right].ObjectID
@@ -921,75 +935,52 @@ func (e *Session) reserveActorPursuit(
 	}
 	actor = e.refreshMovementModifiersLocked(actor, at)
 	actor.Position = actor.followPosition(at)
-	var selected zonenpc.Snapshot
-	selectedDistance := float32(math.MaxFloat32)
-	selectedStopDistance := float32(0)
-	for _, target := range targets {
-		if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 ||
-			target.Plan.IsFixture ||
-			target.Faction == zonenpc.FactionPlayerAligned {
-			continue
-		}
-		// Keep the destination inside the hit acceptance margin; float32
-		// projection must not turn arrival into another pursuit reservation.
-		stopDistance := attackRange + actor.ActorFootprintRadius() +
-			max(float32(0), target.Plan.ActorFootprintRadius())
-		distance := actor.Position.Sub(target.Plan.Position).Length()
-		maximumRange := aggroRadius
-		if !isForced && actor.AggroRadius > 0 {
-			maximumRange = actor.acquisitionCenterRange(target.Plan.ActorFootprintRadius())
-		}
-		if distance <= stopDistance || distance > maximumRange ||
-			distance > selectedDistance {
-			continue
-		}
-		if distance == selectedDistance && selected.Plan.ObjectID != 0 &&
-			target.Plan.ObjectID > selected.Plan.ObjectID {
-			continue
-		}
-		selected = target
-		selectedDistance = distance
-		selectedStopDistance = stopDistance
-	}
-	if selected.Plan.ObjectID == 0 {
+	selection := e.selectPursuit(actor, targets, attackRange, aggroRadius, isForced)
+	if selection.target.Plan.ObjectID == 0 {
 		return Pursuit{}, false, nil
 	}
-	if actor.IsFollowing {
-		actor.clearFollow()
-		actor.FollowRevision = e.nextFollowRevision()
-	}
+	selected := selection.target
+	selectedStopDistance := selection.stopDistance
 	source := actor.Position
-	delta := source.Sub(selected.Plan.Position)
-	destination := selected.Plan.Position.Add(
-		delta.Scale(selectedStopDistance / selectedDistance),
-	)
+	points, destination := selection.paths, selection.destination
 	actorMovementSpeed := movementSpeed * movementScale(actor)
 	if isForced {
 		actorMovementSpeed = movementSpeed * max(float32(.05), 1+actor.MovementSpeedBuff)
 	}
+	travelDistance := selection.distance - selection.stopDistance
+	if len(points) != 0 {
+		travelDistance = walkingDistance(points, e.navigationMesh)
+	}
 	travelDuration := time.Duration(
-		float64((selectedDistance-selectedStopDistance)/actorMovementSpeed) *
+		float64(travelDistance/actorMovementSpeed) *
 			float64(time.Second),
 	)
-	if travelDuration <= 0 {
+	if travelDuration <= 0 && len(points) == 0 {
 		return Pursuit{}, false, nil
 	}
 	travelDuration = max(travelDuration, minimumPursuitDuration)
+	if actor.IsFollowing {
+		actor.clearFollow()
+		actor.FollowRevision = e.nextFollowRevision()
+	}
 	actor.PursuitObjectID = selected.Plan.ObjectID
 	actor.isForcedPursuit = isForced
 	actor.PursuitPosition = destination
 	actor.PursuitRevision = e.nextPursuitRevision()
 	actor.pursuitSource = source
+	actor.pursuitPaths = points
 	actor.pursuitStartedAt = at
 	actor.pursuitDeadline = at.Add(travelDuration)
 	e.actors[objectID] = actor
-	return Pursuit{
+	plan := Pursuit{
 		ObjectID: objectID, TargetObjectID: selected.Plan.ObjectID,
 		Position: source, TargetPosition: selected.Plan.Position,
 		DesiredStopDistance: selectedStopDistance,
 		TravelDuration:      travelDuration,
 		Revision:            actor.PursuitRevision,
-	}, true, nil
+	}
+	plan.Waypoint, plan.IsWaypointKnown = gateWaypointForPaths(points, e.navigationMesh)
+	return plan, true, nil
 }
 
 func resolveCooldown(cooldown time.Duration, actor Actor) time.Duration {

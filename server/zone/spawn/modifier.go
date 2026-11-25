@@ -156,7 +156,7 @@ func (o *outbox) Stop(
 func (o *outbox) ApplyModifier(
 	_ context.Context, meta sim.EventMeta, intent sim.AttributeModifierIntent,
 ) error {
-	if intent.Role != NPCRole ||
+	if !intent.IsLegacyDelta() || intent.Role != NPCRole ||
 		intent.AttributeKind != sim.AttributeImmobilized || intent.Amount != 1 {
 		return fmt.Errorf("attributeIntent: %#v", intent)
 	}

@@ -81,14 +81,26 @@ func (e *heroChannelAreaRun) finishInterruptedTargetsLocked() {
 			continue
 		}
 		at := e.registry.now()
+		instanceID, allocationErr := e.modifierPool.Allocate()
+		if allocationErr != nil {
+			log.Printf("RakNet gravity drop owner allocation failed target=%d: %v", npc.Plan.ObjectID, allocationErr)
+			step := gravityStormDropResetStep{registry: e.registry, zone: e.zone, npc: e.npc, objectID: npc.Plan.ObjectID}
+			step.resetLocked()
+			continue
+		}
 		step := gravityStormDropResetStep{
 			registry: e.registry, zone: e.zone, npc: e.npc, objectID: npc.Plan.ObjectID,
+			modifierPool: e.modifierPool, instanceID: instanceID,
 			expiresAt: at.Add(gravityStormDropDuration),
 			timestamp: e.sourceTime + uint64(max(time.Duration(0), at.Sub(e.startedAt)+gravityStormDropDuration)/time.Millisecond),
 		}
-		err := e.npc.ApplyStun(step.objectID, step.expiresAt)
+		isAdmitted, err := e.npc.AdmitStunModifier(step.objectID, instanceID, at, step.expiresAt)
 		if err != nil {
 			log.Printf("RakNet gravity drop control failed target=%d: %v", step.objectID, err)
+		}
+		if err != nil || !isAdmitted {
+			step.resetLocked()
+			continue
 		}
 		cancel, scheduleErr := e.timer.Schedule(gravityStormDropDuration, step.execute)
 		if scheduleErr != nil || cancel == nil {
@@ -103,12 +115,14 @@ func (e *heroChannelAreaRun) finishInterruptedTargetsLocked() {
 }
 
 type gravityStormDropResetStep struct {
-	registry  *gameplaySessionRegistry
-	zone      *zone.Zone
-	npc       *zonenpc.Session
-	objectID  uint32
-	expiresAt time.Time
-	timestamp uint64
+	registry     *gameplaySessionRegistry
+	modifierPool *modifierPool
+	instanceID   uint32
+	zone         *zone.Zone
+	npc          *zonenpc.Session
+	objectID     uint32
+	expiresAt    time.Time
+	timestamp    uint64
 }
 
 func (e gravityStormDropResetStep) execute() {
@@ -118,7 +132,13 @@ func (e gravityStormDropResetStep) execute() {
 }
 
 func (e gravityStormDropResetStep) resetLocked() {
-	e.npc.ClearStun(e.objectID, e.expiresAt)
+	e.npc.ClearStunModifier(e.objectID, e.instanceID)
+	if e.modifierPool != nil && e.instanceID != 0 {
+		releaseErr := e.modifierPool.Release(e.instanceID)
+		if releaseErr != nil {
+			log.Printf("RakNet gravity drop owner release failed target=%d: %v", e.objectID, releaseErr)
+		}
+	}
 	npc, isFound := e.npc.NPC(e.objectID)
 	if !isFound || npc.IsDefeated || npc.HitPoint <= 0 ||
 		e.npc.StunRemaining(e.objectID, e.registry.now()) > 0 {

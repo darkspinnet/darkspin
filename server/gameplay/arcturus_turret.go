@@ -21,11 +21,52 @@ type campaignArcturusTurret struct {
 	owner          campaignArcturusSpawnStep
 	zone           *zone.Zone
 	objectID       uint32
-	markerIDs      [2]uint32
+	markerIDs      [4]uint32
 	startedAt      time.Time
 	nextHitAt      time.Time
 	protectedUntil time.Time
 	isProtected    bool
+}
+
+// retireArcturusControllers is a world/transport teardown boundary, not a hero
+// death boundary. Publish through each controller's pinned zone so remaining
+// members remove its owned objects even after the departing schedule is stopped.
+func (e *gameplayPeerSession) retireArcturusControllers() error {
+	if e == nil {
+		return nil
+	}
+	var retireErr error
+	for bossObjectID, state := range e.campaignArcturusStates {
+		if state == nil || state.zone == nil || state.turret == nil {
+			delete(e.campaignArcturusStates, bossObjectID)
+			continue
+		}
+		run := state.turret
+		err := state.zone.NPCs().Despawn([]uint32{run.objectID})
+		if err != nil {
+			retireErr = errors.Join(retireErr, fmt.Errorf("turretDespawn[%d]: %w", bossObjectID, err))
+		}
+		deaths := make([]zonenpc.DeathEvent, 0, 11)
+		for index, markerID := range run.markerIDs {
+			maximumSlot := uint8(1)
+			if index%2 == 0 {
+				maximumSlot = 2
+			}
+			for slot := uint8(1); slot <= maximumSlot; slot++ {
+				deaths = append(deaths, zonenpc.DeathEvent{Kind: zonenpc.DeathEffect,
+					TargetObjectID: markerID, EffectSlot: slot, IsEffectStopped: true})
+			}
+		}
+		for _, objectID := range []uint32{run.markerIDs[0], run.markerIDs[1], run.markerIDs[2], run.markerIDs[3], run.objectID} {
+			deaths = append(deaths, zonenpc.DeathEvent{Kind: zonenpc.DeathDelete, TargetObjectID: objectID})
+		}
+		state.zone.PublishNPCDeath(deaths, 0, 0)
+		delete(e.campaignArcturusStates, bossObjectID)
+	}
+	if retireErr != nil {
+		return fmt.Errorf("arcturusRetire: %w", retireErr)
+	}
+	return nil
 }
 
 func (e campaignArcturusSpawnStep) startTurret(current *gameplayPeerSession, boss zonenpc.Snapshot) ([][]byte, error) {
@@ -67,10 +108,15 @@ func (e campaignArcturusSpawnStep) startTurret(current *gameplayPeerSession, bos
 		}
 		packets = append(packets, packet)
 	}
-	effects := []raknet.AttachedEffectMessage{
-		{ObjectID: run.markerIDs[0], SecondaryObjectID: run.markerIDs[1], Slot: 1, IsForceAttached: true, Asset: util.HashID("citadel_boss_turret_laser.ServerEventDef")},
-		{ObjectID: run.markerIDs[0], Slot: 2, IsForceAttached: true, Asset: util.HashID("citadel_boss_turret_laser_beam_muzzle.ServerEventDef")},
-		{ObjectID: run.markerIDs[1], Slot: 1, IsForceAttached: true, Asset: util.HashID("citadel_boss_turret_laser_beam_tip.ServerEventDef")},
+	effects := make([]raknet.AttachedEffectMessage, 0, 6)
+	for beamIndex := range 2 {
+		startID := run.markerIDs[beamIndex*2]
+		endID := run.markerIDs[beamIndex*2+1]
+		effects = append(effects,
+			raknet.AttachedEffectMessage{ObjectID: startID, SecondaryObjectID: endID, Slot: 1, IsForceAttached: true, Asset: util.HashID("citadel_boss_turret_laser.ServerEventDef")},
+			raknet.AttachedEffectMessage{ObjectID: startID, Slot: 2, IsForceAttached: true, Asset: util.HashID("citadel_boss_turret_laser_beam_muzzle.ServerEventDef")},
+			raknet.AttachedEffectMessage{ObjectID: endID, Slot: 1, IsForceAttached: true, Asset: util.HashID("citadel_boss_turret_laser_beam_tip.ServerEventDef")},
+		)
 	}
 	for _, effect := range effects {
 		packet, marshalErr := raknet.MarshalApplication(effect)
@@ -83,6 +129,13 @@ func (e campaignArcturusSpawnStep) startTurret(current *gameplayPeerSession, bos
 	if err != nil {
 		return nil, fmt.Errorf("turretAdd: %w", err)
 	}
+	run.protectedUntil = run.startedAt.Add(time.Second)
+	err = current.zone.NPCs().SetArcturusTurretExposed(objectID, false, run.protectedUntil)
+	if err != nil {
+		rollbackErr := current.zone.NPCs().RollbackAdd(plans)
+		return nil, fmt.Errorf("turretPhysics: %w", errors.Join(err, rollbackErr))
+	}
+	run.isProtected = true
 	err = current.zone.PublishNPCSpawn(zoneprojection.NPCSpawn{Plans: plans, TargetObjectID: boss.TargetObjectID}, current.binding.UserID, current.generation)
 	if err != nil {
 		rollbackErr := current.zone.NPCs().RollbackAdd(plans)
@@ -92,11 +145,6 @@ func (e campaignArcturusSpawnStep) startTurret(current *gameplayPeerSession, bos
 		zonenpc.ActionOwner{UserID: current.binding.UserID, PeerGeneration: current.generation}, boss.TargetObjectID)
 	if err == nil && (!isStarted || !isFirst || !snapshot.IsActionStarted) {
 		err = errors.New("turret action rejected")
-	}
-	if err == nil {
-		run.protectedUntil = run.startedAt.Add(time.Second)
-		err = current.zone.NPCs().ApplyIntangible(objectID, run.protectedUntil)
-		run.isProtected = err == nil
 	}
 	if err == nil {
 		err = scheduleNPCProducer(e.runtime.registry, e.packet, 100*time.Millisecond, run.tick)
@@ -121,7 +169,8 @@ func (e *campaignArcturusTurret) tick() ([][]byte, error) {
 	}
 	boss, isBossFound := current.zone.NPCs().NPC(owner.objectID)
 	turret, isTurretFound := current.zone.NPCs().NPC(e.objectID)
-	if current.isZoneTerminal() || !isBossFound || boss.IsDefeated || !isTurretFound || turret.IsDefeated || owner.state.turret != e {
+	if current.isZoneTerminal() || !isBossFound || boss.IsDefeated || !isTurretFound || turret.IsDefeated ||
+		current.campaignArcturusStates[owner.objectID] != owner.state || owner.state.turret != e {
 		err := current.zone.NPCs().Despawn([]uint32{e.objectID})
 		owner.runtime.registry.mutex.Unlock()
 		if err != nil {
@@ -133,35 +182,55 @@ func (e *campaignArcturusTurret) tick() ([][]byte, error) {
 	isAirborne := owner.state.launch != nil && now.Before(owner.state.launch.protectedUntil) &&
 		!now.Before(owner.state.launch.protectedUntil.Add(-8200*time.Millisecond))
 	var err error
+	isPreviouslyProtected := e.isProtected
 	if !isAirborne {
 		e.protectedUntil = now.Add(time.Second)
-		err = current.zone.NPCs().ApplyIntangible(e.objectID, e.protectedUntil)
+		err = current.zone.NPCs().SetArcturusTurretExposed(e.objectID, false, e.protectedUntil)
 		e.isProtected = err == nil
 	} else if e.isProtected {
-		current.zone.NPCs().ClearIntangible(e.objectID, e.protectedUntil)
-		e.isProtected = false
+		err = current.zone.NPCs().SetArcturusTurretExposed(e.objectID, true, e.protectedUntil)
+		if err == nil {
+			e.isProtected = false
+		}
+	}
+	packets := make([][]byte, 0)
+	if err == nil && e.isProtected != isPreviouslyProtected {
+		var packet []byte
+		packet, err = raknet.MarshalApplication(raknet.ObjectCollisionUpdateMessage{
+			ObjectID: e.objectID, IsCollisionEnabled: !e.isProtected,
+		})
+		if err == nil {
+			packets = append(packets, packet)
+		}
 	}
 	// The native orbit rate is unrecovered. Server-owned markers keep the
 	// conservative 24-second orbit identical for presentation and hit checks.
 	angle := now.Sub(e.startedAt).Seconds() * 2 * math.Pi / 24
-	start := owner.state.center
-	start.X += float32(math.Cos(angle))
-	start.Y += float32(math.Sin(angle))
-	end := owner.state.center
-	end.X += 40 * float32(math.Cos(angle))
-	end.Y += 40 * float32(math.Sin(angle))
-	clipped, isClipped, clipErr := navigationClippedMovementDestination(current.zone.Navigation(), start, end, 0.25)
-	if clipErr != nil {
-		err = fmt.Errorf("turretBeamClip: %w", clipErr)
-	} else if isClipped {
-		end = clipped
-	} else if current.zone.Navigation() != nil {
-		// Never damage through unavailable geometry.
-		end = start
+	var beamStarts, beamEnds [2]game.Vec3
+	for beamIndex := range beamStarts {
+		beamAngle := angle + float64(beamIndex)*math.Pi
+		start := owner.state.center
+		start.X += float32(math.Cos(beamAngle))
+		start.Y += float32(math.Sin(beamAngle))
+		end := owner.state.center
+		end.X += 40 * float32(math.Cos(beamAngle))
+		end.Y += 40 * float32(math.Sin(beamAngle))
+		clipped, isClipped, clipErr := navigationClippedMovementDestination(current.zone.Navigation(), start, end, 0.25)
+		if clipErr != nil {
+			err = fmt.Errorf("turretBeamClip[%d]: %w", beamIndex, clipErr)
+			break
+		}
+		if isClipped {
+			end = clipped
+		} else if current.zone.Navigation() != nil {
+			// Never damage through unavailable geometry.
+			end = start
+		}
+		beamStarts[beamIndex], beamEnds[beamIndex] = start, end
 	}
-	packets := make([][]byte, 0)
 	if err == nil {
-		for index, position := range []game.Vec3{start, end} {
+		positions := [...]game.Vec3{beamStarts[0], beamEnds[0], beamStarts[1], beamEnds[1]}
+		for index, position := range positions {
 			packet, moveErr := npcraknet.RestorePose(e.markerIDs[index], position, game.Vec3{Y: 1})
 			if moveErr != nil {
 				err = fmt.Errorf("turretMarkerMove: %w", moveErr)
@@ -182,7 +251,10 @@ func (e *campaignArcturusTurret) tick() ([][]byte, error) {
 		}
 		if err == nil {
 			for _, target := range current.zone.LiveNPCTargets() {
-				if !isCampaignLineTarget(start, end, target) {
+				// The opposing beams share one damage tick. A target touching
+				// both near the center still receives only one accepted hit.
+				if !isCampaignLineTarget(beamStarts[0], beamEnds[0], target) &&
+					!isCampaignLineTarget(beamStarts[1], beamEnds[1], target) {
 					continue
 				}
 				plan, planErr := zonenpc.PlanAreaAttackWithProfile(turret, target.ObjectID, target.Position, turret.Plan.ActionProfile)
@@ -246,7 +318,7 @@ func (e *campaignArcturusTurret) cleanup() ([][]byte, error) {
 	packets := make([][]byte, 0)
 	for index, objectID := range e.markerIDs {
 		maximumSlot := uint8(1)
-		if index == 0 {
+		if index%2 == 0 {
 			maximumSlot = 2
 		}
 		for slot := uint8(1); slot <= maximumSlot; slot++ {
@@ -258,7 +330,7 @@ func (e *campaignArcturusTurret) cleanup() ([][]byte, error) {
 			packets = append(packets, packet)
 		}
 	}
-	for _, objectID := range []uint32{e.markerIDs[0], e.markerIDs[1], e.objectID} {
+	for _, objectID := range []uint32{e.markerIDs[0], e.markerIDs[1], e.markerIDs[2], e.markerIDs[3], e.objectID} {
 		packet, err := raknet.MarshalApplication(raknet.ObjectDeleteMessage{ObjectID: []uint32{objectID}})
 		if err != nil {
 			return nil, fmt.Errorf("turretDelete: %w", err)

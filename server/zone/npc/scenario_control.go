@@ -591,7 +591,7 @@ func (e *Session) ScenarioMove(req ScenarioMoveRequest) (ScenarioMoveResult, err
 	if elapsed <= 0 {
 		return result, errors.New("controlled npc movement clock did not advance")
 	}
-	step, err := zoneaction.AdvancePursuitPathStep(e.navigationMesh, actor.Plan.Position, projectedDestination,
+	step, err := zoneaction.AdvanceTraversalPathStep(e.navigationMesh, actor.Plan.Position, projectedDestination,
 		footprintRadius, profile.MovementSpeed*float32(elapsed.Seconds()), actor.Navigation)
 	if err != nil {
 		return result, fmt.Errorf("controlPath: %w", err)
@@ -609,6 +609,7 @@ func (e *Session) ScenarioMove(req ScenarioMoveRequest) (ScenarioMoveResult, err
 	control.lastCommandAt = req.At
 	control.lastMoveAt = req.At
 	e.npcs[req.Ref.ObjectID] = actor
+	e.recordNavigationTraversals(req.Ref.ObjectID, step.Traversals)
 	isComplete := zonegeometry.Distance(step.Position, projectedDestination) <= 0.1
 	result.State = scenarioControlState(actor)
 	result.IsComplete = isComplete

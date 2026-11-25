@@ -141,6 +141,7 @@ func (r campaignNPCActionRuntime) spawnArenaPlasmaSentinelPet(
 	}
 	attributePacket, err := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
 		ObjectID: objectID, Value: map[uint8]float32{
+			4:  hitPoint,
 			11: zonecompanion.CompatibilityMovementSpeed,
 			12: zonecompanion.CompatibilityMovementSpeed, 48: 0,
 		},
@@ -148,6 +149,13 @@ func (r campaignNPCActionRuntime) spawnArenaPlasmaSentinelPet(
 	if err != nil {
 		r.releaseArenaPlasmaModifier(instanceID)
 		return nil, fmt.Errorf("arenaPlasmaAttribute: %w", err)
+	}
+	healthPacket, err := raknet.MarshalApplication(raknet.CombatantDataUpdateMessage{
+		ObjectID: objectID, HitPoints: hitPoint,
+	})
+	if err != nil {
+		r.releaseArenaPlasmaModifier(instanceID)
+		return nil, fmt.Errorf("arenaPlasmaHealth: %w", err)
 	}
 	spawnPacket, err := raknet.MarshalApplication(raknet.ServerEventMessage{
 		Asset: util.HashID("PlasmaSentinelPetSpawn"), ObjectID: objectID,
@@ -219,7 +227,7 @@ func (r campaignNPCActionRuntime) spawnArenaPlasmaSentinelPet(
 	}
 	pet.cycleCancel = cancelPoll
 	packets := append([][]byte{modifierPacket}, createPackets...)
-	return append(packets, attributePacket, spawnPacket), nil
+	return append(packets, attributePacket, healthPacket, spawnPacket), nil
 }
 
 func (r campaignNPCActionRuntime) releaseArenaPlasmaModifier(instanceID uint32) {

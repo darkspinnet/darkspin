@@ -599,6 +599,7 @@ func (r campaignNPCActionRuntime) spawnPlasmaSentinelPet(
 	attributePacket, err := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
 		ObjectID: objectID,
 		Value: map[uint8]float32{
+			4:  hitPoint,
 			11: zonecompanion.CompatibilityMovementSpeed,
 			12: zonecompanion.CompatibilityMovementSpeed,
 			48: 0,
@@ -607,6 +608,13 @@ func (r campaignNPCActionRuntime) spawnPlasmaSentinelPet(
 	if err != nil {
 		rollbackPlasmaSentinelPet(peerSession, run, objectID)
 		return nil, fmt.Errorf("plasmaSentinelPetAttribute: %w", err)
+	}
+	healthPacket, err := raknet.MarshalApplication(raknet.CombatantDataUpdateMessage{
+		ObjectID: objectID, HitPoints: hitPoint,
+	})
+	if err != nil {
+		rollbackPlasmaSentinelPet(peerSession, run, objectID)
+		return nil, fmt.Errorf("plasmaSentinelPetHealth: %w", err)
 	}
 	spawnPacket, err := raknet.MarshalApplication(raknet.ServerEventMessage{
 		Asset: util.HashID("PlasmaSentinelPetSpawn"), ObjectID: objectID,
@@ -630,7 +638,7 @@ func (r campaignNPCActionRuntime) spawnPlasmaSentinelPet(
 	}
 	run.pets[petIndex].cancel = cancel
 	packets := append([][]byte{modifierPacket}, createPackets...)
-	packets = append(packets, attributePacket, spawnPacket)
+	packets = append(packets, attributePacket, healthPacket, spawnPacket)
 	birth := plasmaPetBirthStep{
 		run: run, identity: gameplayProducerIdentityFromSession(run.sessionKey, *peerSession, true),
 		packet: run.packet.Autonomous(), objectID: objectID, timestamp: timestamp, packets: packets,
@@ -735,6 +743,7 @@ func (r campaignDamageRuntime) startPlasmaSentinelPetActorAttack(
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&
 		peerSession.plasmaSentinelActive != nil &&
+		peerSession.deployedObjectID == peerSession.plasmaSentinelActive.ownerObjectID &&
 		peerSession.plasmaSentinelActive.hasPet(objectID) &&
 		peerSession.zone != nil && peerSession.zone.Companion() != nil &&
 		peerSession.zone.NPCs() != nil
@@ -748,17 +757,7 @@ func (r campaignDamageRuntime) startPlasmaSentinelPetActorAttack(
 		return nil, nil
 	}
 	ability := r.npc.program.PlasmaSentinelPetBasic
-	petDamage := float32(0)
-	if peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) {
-		petDamage = peerSession.binding.Creatures[peerSession.deployedCreatureIndex].PetDamage
-	}
-	damageRange, err := game.ResolveAbilityDamageRange(
-		game.AbilityDamage{
-			Minimum: ability.MinimumDamage, Maximum: ability.MaximumDamage,
-			Coefficient: ability.DamageCoefficient,
-		},
-		game.DamageProfile{PrimaryAttribute: petDamage, IsPrimaryAttributeFound: true},
-	)
+	damageRange, err := peerSession.plasmaPetDamageRange(ability)
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("plasmaSentinelPetDamage: %w", err)

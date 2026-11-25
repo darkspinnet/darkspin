@@ -13,6 +13,9 @@ type GameplayState struct {
 	SessionStage         string
 	MissionLabel         string
 	MissionAsset         string
+	IsReplay             bool
+	IsReplayRandomized   bool
+	IsNoReplay           bool
 	MissionDifficulty    uint32
 	IsDungeonSetupFinal  bool
 	IsArena              bool

@@ -10,6 +10,7 @@ import (
 // PlayerStats contains durable lifetime counters shown by View Profile.
 // Ratios and totals derived from these counters remain projection concerns.
 type PlayerStats struct {
+	DNAEarned          uint64
 	PVEPlayTimeSecond  uint64
 	PVEMinionKill      uint64
 	PVESpecialKill     uint64
@@ -33,6 +34,15 @@ type PlayerStats struct {
 	PVPHealing         float64
 	PVPHealingReceived float64
 	PVPHealingMaximum  float64
+}
+
+// addDNAEarned keeps the durable counter within both SQL backends' BIGINT range.
+func addDNAEarned(stats *PlayerStats, amount uint32) error {
+	if stats.DNAEarned > math.MaxInt64 || uint64(amount) > math.MaxInt64-stats.DNAEarned {
+		return errors.New("DNA earnings overflow")
+	}
+	stats.DNAEarned += uint64(amount)
+	return nil
 }
 
 // PlayerStatDelta is one accepted authoritative gameplay result. Damage and

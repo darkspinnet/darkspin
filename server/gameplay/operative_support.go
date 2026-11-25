@@ -14,6 +14,9 @@ import (
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
 )
 
+// A two-metre orbit at the healing drone's authored idle speed of 3 m/s.
+const omicronDroneOrbitDuration = 4190 * time.Millisecond
+
 // Agent support belongs to the actual authored summoner, not the director pool.
 // Chunk690 creates CyberOne's unattackable drone; chunk24 owns two pet slots.
 type agentSupportState struct {
@@ -179,16 +182,18 @@ func (e *agentSupportState) tick() ([][]byte, error) {
 			return nil, fmt.Errorf("agentChildReserve: %w", err)
 		}
 		position := owner.Plan.Position
-		if !e.isDrone {
+		if e.isDrone {
+			position = campaignDroneOrbitPosition(position, 0, omicronDroneOrbitDuration)
+		} else {
 			position = position.Add(owner.Facing.Scale(owner.Plan.ActorFootprintRadius() + 4))
-		}
-		projected, isProjected, projectionErr := zoneaction.NPCProjectPosition(member.zone.Navigation(), position, max(npcProfile.FootprintRadius, float32(0.1)))
-		if projectionErr != nil {
-			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("agentChildPosition: %w", projectionErr)
-		}
-		if isProjected {
-			position = projected
+			projected, isProjected, projectionErr := zoneaction.NPCProjectPosition(member.zone.Navigation(), position, max(npcProfile.FootprintRadius, float32(0.1)))
+			if projectionErr != nil {
+				e.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("agentChildPosition: %w", projectionErr)
+			}
+			if isProjected {
+				position = projected
+			}
 		}
 		actionProfile := zonenpc.AgentChildProfile(nounName, npcProfile.NPCRank)
 		plan := zonenpc.SpawnPlan{ObjectID: objectID, OwnerObjectID: e.ownerObjectID, NounName: nounName, Position: position, LocusID: owner.Plan.LocusID, MarkerSetName: owner.Plan.MarkerSetName, IsEncounterAuxiliary: true, IsOwnedDeathPersistent: !e.isDrone && zonenpc.EffectivePassiveRank(owner.Plan) >= 2, IsLootSuppressed: true, IsExperienceSuppressed: true, NPCProfile: npcProfile, ActionProfile: actionProfile, IsActionKnown: true}
@@ -287,8 +292,21 @@ func (e *agentSupportState) tick() ([][]byte, error) {
 			}
 		}
 	}
+	droneObjectID := uint32(0)
+	if e.isDrone && len(e.childObjectIDs) > 0 {
+		droneObjectID = e.childObjectIDs[0]
+		if member.droneFollows[droneObjectID] != nil {
+			droneObjectID = 0
+		}
+	}
 	e.runtime.registry.sessions[e.sessionKey] = member
 	e.runtime.registry.mutex.Unlock()
+	if droneObjectID != 0 {
+		err := e.runtime.startCampaignDroneFollow(e.packet.Autonomous(), e.sessionKey, e.generation, droneObjectID)
+		if err != nil && e.runtime.logger != nil {
+			e.runtime.logger.Printf("RakNet Omicron drone orbit unavailable object=%d: %v", droneObjectID, err)
+		}
+	}
 	if len(spawnedPlans) > 0 {
 		actionPackets, err := e.runtime.scheduleFirstActions(e.packet, e.sessionKey, e.generation, spawnedPlans, e.timestamp)
 		if err != nil {

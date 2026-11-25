@@ -14,6 +14,7 @@ import (
 type CampaignDestination struct {
 	Level              string
 	IsReplayRandomized bool
+	IsNoReplay         bool
 }
 
 // SelectCampaignDestination runs after the complete party has been admitted,
@@ -41,7 +42,7 @@ func (e *Manager) SelectCampaignDestination(instance *Instance) error {
 	if err != nil {
 		return fmt.Errorf("destinationSeed: %w", err)
 	}
-	destination, err := e.campaignDestination(difficulty, runSeed, completedStages)
+	destination, err := e.campaignDestinationForSession(instance, difficulty, runSeed, completedStages, "")
 	if err != nil {
 		return fmt.Errorf("destinationSelect: %w", err)
 	}
@@ -49,6 +50,7 @@ func (e *Manager) SelectCampaignDestination(instance *Instance) error {
 	instance.RunSeed = runSeed
 	instance.Info.Level = destination.Level
 	instance.Info.IsReplayRandomized = destination.IsReplayRandomized
+	instance.Info.IsNoReplay = destination.IsNoReplay
 	instance.campaignDestinations = map[uint32]CampaignDestination{difficulty: destination}
 	instance.mu.Unlock()
 	return nil
@@ -209,8 +211,13 @@ func (e *GameplayJoin) ResolveCampaignDestination(
 	instance.mu.RLock()
 	retained, isRetained := instance.campaignDestinations[binding.Difficulty]
 	previousLevel := instance.Info.Level
+	currentDifficulty, difficultyErr := resolveGameplayDifficulty(instance.Info)
 	instance.mu.RUnlock()
-	if isRetained {
+	if difficultyErr != nil {
+		return CampaignDestination{}, fmt.Errorf("offerDifficulty: %w", difficultyErr)
+	}
+	isNoReplay := instance.IsNoReplayEnabled()
+	if isRetained && (binding.Difficulty == currentDifficulty || retained.IsNoReplay == isNoReplay) {
 		return retained, nil
 	}
 	// A completed mission may be offered before its progression transaction.
@@ -218,15 +225,15 @@ func (e *GameplayJoin) ResolveCampaignDestination(
 	for index := range completedStages {
 		completedStages[index] = max(completedStages[index], binding.Difficulty-1)
 	}
-	destination, err := e.gameManager.campaignDestinationAfter(
-		binding.Difficulty, binding.RunSeed, completedStages, previousLevel,
+	destination, err := e.gameManager.campaignDestinationForSession(
+		instance, binding.Difficulty, binding.RunSeed, completedStages, previousLevel,
 	)
 	if err != nil {
 		return CampaignDestination{}, fmt.Errorf("destinationResolve: %w", err)
 	}
 	instance.mu.Lock()
 	defer instance.mu.Unlock()
-	if retained, isRetained := instance.campaignDestinations[binding.Difficulty]; isRetained {
+	if retained, isRetained := instance.campaignDestinations[binding.Difficulty]; isRetained && retained.IsNoReplay == destination.IsNoReplay {
 		return retained, nil
 	}
 	if instance.campaignDestinations == nil {
@@ -259,7 +266,7 @@ func (e *GameplayJoin) RetainCampaignDestination(binding GameplayBinding) error 
 	}
 	if binding.Difficulty == difficulty {
 		if !strings.EqualFold(instance.Info.Level, binding.Level) ||
-			instance.Info.IsReplayRandomized != binding.IsReplayRandomized {
+			instance.Info.IsReplayRandomized != binding.IsReplayRandomized || instance.Info.IsNoReplay != binding.IsNoReplay {
 			return errors.New("campaign retention destination mismatch")
 		}
 		return nil
@@ -269,6 +276,33 @@ func (e *GameplayJoin) RetainCampaignDestination(binding GameplayBinding) error 
 	}
 	instance.Info.Level = binding.Level
 	instance.Info.IsReplayRandomized = binding.IsReplayRandomized
+	instance.Info.IsNoReplay = binding.IsNoReplay
 	instance.Info.Attributes["SelectedDifficulty"] = fmt.Sprintf("%d", binding.Difficulty)
 	return nil
+}
+
+// IsNoReplayEnabled uses the host's login preference for the whole party.
+// A mission already running retains its own IsNoReplay provenance.
+func (e *Instance) IsNoReplayEnabled() bool {
+	e.mu.RLock()
+	host := e.players[e.hostUserID]
+	e.mu.RUnlock()
+	return host.IsNoReplayEnabled()
+}
+
+func (e *Manager) campaignDestinationForSession(
+	instance *Instance, difficulty uint32, runSeed uint64, completedStages []uint32, previousLevel string,
+) (CampaignDestination, error) {
+	destination, err := e.campaignDestinationAfter(difficulty, runSeed, completedStages, previousLevel)
+	if err != nil {
+		return CampaignDestination{}, fmt.Errorf("sessionDestination: %w", err)
+	}
+	if !instance.IsNoReplayEnabled() {
+		return destination, nil
+	}
+	level, isFound := e.ChainLevelForSelection(difficulty)
+	if !isFound {
+		return CampaignDestination{}, errors.New("authored campaign map unavailable")
+	}
+	return CampaignDestination{Level: level, IsNoReplay: true}, nil
 }

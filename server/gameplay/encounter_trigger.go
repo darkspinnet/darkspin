@@ -85,6 +85,31 @@ func (e campaignEncounterRuntime) acceptTriggerPublicationsLocked(
 		if planErr != nil {
 			return result, fmt.Errorf("moveCampaignEncounterPlan: %w", planErr)
 		}
+		if len(encounterPlan.Boss) == 1 && zoneboss.IsFinalBossNoun(encounterPlan.Boss[0].NounName) {
+			plans := encounterPlan.Boss
+			packets, err := npcraknet.TargetedSpawns(plans, peerSession.deployedObjectID)
+			if err != nil {
+				return result, fmt.Errorf("destructorSpawn: %w", err)
+			}
+			if !isCampaignBossIntroDelayed(plans[0]) {
+				activePacket, activeErr := bossraknet.Active(plans[0].ObjectID, true)
+				if activeErr != nil {
+					return result, fmt.Errorf("destructorActive: %w", activeErr)
+				}
+				packets = append(packets, activePacket)
+			}
+			err = peerSession.zone.ArmBossEncounter(publication, peerSession.deployedObjectID, plans)
+			if err != nil {
+				return result, fmt.Errorf("destructorArm: %w", err)
+			}
+			err = peerSession.zone.AdmitBoss(peerSession.deployedObjectID, plans)
+			if err != nil {
+				return result, fmt.Errorf("destructorAdmit: %w", err)
+			}
+			result.namedBossPlans = append(result.namedBossPlans, plans...)
+			result.namedBossPackets = append(result.namedBossPackets, packets...)
+			continue
+		}
 		abilityCount, isAbilityCountFound := peerSession.zone.AbilityCount(
 			zoneResultMember(*peerSession),
 		)
@@ -252,6 +277,11 @@ func (e campaignEncounterRuntime) acceptTriggerPublicationsLocked(
 			return result, fmt.Errorf("hordeState: %w", stateErr)
 		}
 		plannedPackets = append(plannedPackets, hordeStatePacket)
+		alertPacket, alertErr := marshalCampaignHordeAlert(tutorialHordeIncomingClientEventID)
+		if alertErr != nil {
+			return result, fmt.Errorf("hordeIncoming: %w", alertErr)
+		}
+		plannedPackets = append([][]byte{alertPacket}, plannedPackets...)
 		hordeErr := peerSession.zone.AdmitFirstHorde(
 			publication, peerSession.deployedObjectID, plannedHorde,
 		)

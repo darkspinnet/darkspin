@@ -182,6 +182,13 @@ func marshalInvincitronRageAttributes(actor zonenpc.Snapshot) ([]byte, error) {
 }
 
 func (e *gameplaySessionRegistry) cleanseInvincitronLocked(member gameplayPeerSession, objectID uint32, pool *modifierPool) ([][]byte, error) {
+	isFireRetired, fireErr := e.retireFireVulnerabilityLocked(member.zone, objectID)
+	if fireErr != nil {
+		return nil, fmt.Errorf("cleanseFire: %w", fireErr)
+	}
+	if isFireRetired {
+		// Shared modifier deletion was queued before its contribution retired.
+	}
 	packets, err := e.retireFixtureBurnsLocked(member.zone.NPCs(), objectID, pool)
 	if err != nil {
 		return packets, fmt.Errorf("cleanseFixture: %w", err)

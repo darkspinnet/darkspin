@@ -2,10 +2,9 @@ package game
 
 import "errors"
 
-// EnemyPopulationRules controls the reconstructed standing campaign population.
-// Authored spawn points and separate boss/horde encounters still bound the result.
+// EnemyPopulationRules controls campaign composition and health projection.
+// Ordinary enemy counts belong to the destination map's population budget.
 type EnemyPopulationRules struct {
-	EnemiesPerSection           uint32
 	AgentSelection              string
 	AgentsPerSection            uint32
 	RosterSelection             string
@@ -17,15 +16,12 @@ type EnemyPopulationRules struct {
 }
 
 func DefaultEnemyPopulationRules() EnemyPopulationRules {
-	return EnemyPopulationRules{EnemiesPerSection: 15, AgentSelection: "current_coop", AgentsPerSection: 1,
+	return EnemyPopulationRules{AgentSelection: "current_coop", AgentsPerSection: 1,
 		RosterSelection: "current_composition", ExternalRosterWeightPercent: 50, AmbientEliteChancePercent: 100,
 		OwnedSummonHealthScaling: "run_and_party", FixtureHealthScaling: "base"}
 }
 
 func (e EnemyPopulationRules) Validate() error {
-	if e.EnemiesPerSection < 10 || e.EnemiesPerSection > 60 {
-		return errors.New("enemies per section must be between 10 and 60")
-	}
 	if e.AgentSelection != "current_coop" && e.AgentSelection != "authored_external" {
 		return errors.New("invalid agent selection")
 	}
@@ -46,9 +42,6 @@ func isHealthScaling(policy string) bool {
 }
 
 func (e EnemyPopulationRules) Resolved() EnemyPopulationRules {
-	if e.EnemiesPerSection == 0 {
-		return DefaultEnemyPopulationRules()
-	}
 	defaults := DefaultEnemyPopulationRules()
 	if e.AgentSelection == "" {
 		e.AgentSelection = defaults.AgentSelection

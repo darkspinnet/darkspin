@@ -21,7 +21,6 @@ import (
 	companionraknet "github.com/darkspinnet/darkspin/server/zone/companion/raknet103"
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
 	zonehorde "github.com/darkspinnet/darkspin/server/zone/horde"
-	horderaknet "github.com/darkspinnet/darkspin/server/zone/horde/raknet103"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
@@ -237,12 +236,20 @@ func (e campaignCompanionFollowStep) produce() ([][]byte, error) {
 		}
 		return nil, nil
 	}
-	packets, err := companionraknet.FollowArrival(e.plan)
+	// Publish the refreshed route's accepted pose rather than a captured goal
+	// that might no longer be the authoritative destination.
+	currentActor, isCurrentActorFound := e.zone.Companion().Snapshot(e.plan.ObjectID)
+	if !isCurrentActorFound || currentActor.FollowRevision != e.plan.Revision {
+		return nil, nil
+	}
+	arrival := e.plan
+	arrival.Destination = currentActor.Position
+	packets, err := companionraknet.FollowArrival(arrival)
 	if err != nil {
 		return nil, fmt.Errorf("followArrival: %w", err)
 	}
 	isReleased := e.zone.Companion().ReleaseFollow(
-		e.plan.ObjectID, e.plan.Revision, e.plan.Destination,
+		e.plan.ObjectID, e.plan.Revision, arrival.Destination,
 	)
 	if !isReleased {
 		return nil, nil
@@ -591,7 +598,9 @@ func (e campaignActionAuthority) interruptMovement(
 		e.registry.sessions[sessionKey] = peerSession
 		return interruption
 	}
-	if !peerSession.isAbilityReleaseReady(now) {
+	isBasicHeld := peerSession.basicSequenceSession().IsHeld() &&
+		!peerSession.campaignPlayerPursuitSession().Snapshot().IsActive
+	if !peerSession.isAbilityReleaseReady(now) || isBasicHeld {
 		attackPose := peerSession.attackPose
 		if peerSession.basicAttack == nil && !attackPose.isActiveAt(now) {
 			attackPose = retainedAttackPose{}
@@ -651,24 +660,6 @@ func (r campaignMovementCommandRuntime) handle(
 	commandSession gameplayPeerSession,
 ) ([][]byte, error) {
 	var err error
-	if commandSession.isSleepingCloudActive(r.now()) {
-		// Immobilized holds the native mover for this fixed-duration cast.
-		// Repeated walking input at the held pose needs no placement reset.
-		deltaX := command.Common.Position.X - commandSession.playerPosition.X
-		deltaY := command.Common.Position.Y - commandSession.playerPosition.Y
-		radius := commandSession.deployedCampaignNavigationRadius()
-		if isFiniteZonePosition(command.Common.Position) && radius > 0 &&
-			deltaX*deltaX+deltaY*deltaY <= radius*radius {
-			return nil, nil
-		}
-		packets, marshalErr := marshalPlayerMovementCorrection(
-			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
-		)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("moveSleepingCloud: %w", marshalErr)
-		}
-		return packets, nil
-	}
 	if commandSession.isKnockbackActive(r.now()) {
 		// The native jump owns the mover until landing. A walk/stop correction
 		// here would cancel its displacement and airborne reaction.
@@ -806,6 +797,11 @@ func (r campaignMovementCommandRuntime) handle(
 	}
 	goal = raknet.Vector3{X: admission.Goal.X, Y: admission.Goal.Y, Z: admission.Goal.Z}
 	sessionKey := packet.Address.String()
+	err = r.registry.startedMovementAction(sessionKey, commandSession.generation,
+		command.Common.ObjectID, game.Vec3(goal), command.Movement.GoalFlags&0x20 != 0, r.now(), packet.SourceTime)
+	if err != nil {
+		return nil, fmt.Errorf("moveActionEvent: %w", err)
+	}
 	interruption := r.action.interruptMovement(
 		sessionKey, commandSession.generation, command.Common.ObjectID,
 		game.Vec3{X: goal.X, Y: goal.Y, Z: goal.Z}, r.now(), packet.SourceTime,
@@ -974,6 +970,10 @@ func (r campaignMovementCommandRuntime) handle(
 			}
 			r.registry.sessions[packet.Address.String()] = peerSession
 			r.registry.mutex.Unlock()
+			publishErr := publishCampaignPeersAfterCommit(r.registry, packet, encounterResult.gatePackets)
+			if publishErr != nil {
+				return nil, fmt.Errorf("moveCampaignGatePublish: %w", publishErr)
+			}
 			return encounterResult.gatePackets, nil
 		}
 		current = encounterResult.current
@@ -1464,12 +1464,12 @@ func (r campaignMovementCommandRuntime) handle(
 	response = append(response, tutorialCapsulePackets...)
 	response = append(response, tutorialHordePackets...)
 	response = append(response, companionFollowPackets...)
+	response = append(response, namedBossPackets...)
 	response = append(response, firstActionPackets...)
 	response = append(response, companionAttackPackets...)
 	response = append(response, encounterUnlockPackets...)
 	response = append(response, immediateUnlockPackets...)
 	response = append(response, immediateBossPackets...)
-	response = append(response, namedBossPackets...)
 	response = append(response, securityDeactivationPackets...)
 	response = append(response, securityActivationPackets...)
 	response = append(response, tutorialTeleporterPackets...)
@@ -1545,12 +1545,17 @@ func (r campaignMovementCommandRuntime) rejectActiveAttackMovement(
 	command raknet.ActionCommandData, playerPosition raknet.Vector3,
 	basicSyncStamp uint8, attackPose retainedAttackPose,
 ) ([][]byte, error) {
-	response, err := marshalZonePlayerStop(command.Common.ObjectID, playerPosition)
+	var response [][]byte
+	var err error
 	if attackPose.isActive {
 		response, err = marshalZonePlayerAttackPose(
 			command.Common.ObjectID, playerPosition,
 			attackPose.facing, attackPose.targetPosition,
 		)
+	} else {
+		var stopPacket []byte
+		stopPacket, err = marshalReflectedPlayerStop(command.Common.ObjectID, playerPosition)
+		response = [][]byte{stopPacket}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("moveCampaignAttackMarshal: %w", err)
@@ -2195,18 +2200,9 @@ func (r campaignEncounterRuntime) advance(
 	isTutorialCreatureMarkerEntered := false
 	isTutorialCapsuleMarkerEntered := false
 	if routeMovement.GateContact.MarkerID != 0 {
-		constrainedPosition := raknet.Vector3{
-			X: result.current.X, Y: result.current.Y, Z: result.current.Z,
-		}
-		movementErr := peerSession.teleportPlayer(movementNow, constrainedPosition)
-		if movementErr != nil {
-			return result, fmt.Errorf("moveCampaignGatePosition: %w", movementErr)
-		}
-		result.gatePackets, err = horderaknet.GateRepel(
-			objectID, routeMovement.GateContact,
-		)
+		result.gatePackets, err = peerSession.enterHordeGate(objectID, routeMovement.GateContact, movementNow)
 		if err != nil {
-			return result, fmt.Errorf("moveCampaignHordeGateMarshal: %w", err)
+			return result, fmt.Errorf("moveCampaignHordeGate: %w", err)
 		}
 		r.logger.Printf("RakNet campaign horde gate repelled %s marker_set=%q marker=%d return=(%.3f,%.3f,%.3f)",
 			packet.Address, routeMovement.GateContact.MarkerSetName,
@@ -2318,7 +2314,7 @@ func (r campaignEncounterRuntime) advance(
 				break
 			}
 		}
-		if peerSession.binding.Mode == game.ModeChain && len(result.bossPlans) == 0 &&
+		if peerSession.binding.Mode == game.ModeChain && len(result.bossPlans) == 0 && len(result.namedBossPlans) == 0 &&
 			!isNamedBossTriggerPending {
 			namedBossPlan, isNamedBossPlanned, namedBossErr :=
 				peerSession.zone.PlanBossNearPosition(

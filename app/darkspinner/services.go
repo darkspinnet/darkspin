@@ -20,6 +20,7 @@ import (
 )
 
 type spinnerServiceSet struct {
+	paths          *spinnerPathSet
 	cancel         context.CancelFunc
 	initializeDone <-chan struct{}
 	gameServer     *server.Server
@@ -41,6 +42,25 @@ type spinnerPathSet struct {
 }
 
 func resolveSpinnerPaths(basePath string) (*spinnerPathSet, error) {
+	pathSet, err := resolveSpinnerBasePaths(basePath)
+	if err != nil {
+		return nil, fmt.Errorf("basePaths: %w", err)
+	}
+	config, _, err := server.LoadLocalConfiguration(pathSet.configPath)
+	if err != nil {
+		return nil, fmt.Errorf("configLoad: %w", err)
+	}
+	contentPath, err := config.ContentPath(pathSet.configPath)
+	if err != nil {
+		return nil, fmt.Errorf("contentPath: %w", err)
+	}
+	pathSet.contentPath = filepath.Join(contentPath, server.ContentDatabaseFilename)
+	pathSet.staticPath = filepath.Join(contentPath, "www", "static")
+	return pathSet, nil
+}
+
+// Client preference and path lookups must not initialize the profile database.
+func resolveSpinnerBasePaths(basePath string) (*spinnerPathSet, error) {
 	if strings.TrimSpace(basePath) == "" {
 		return nil, errors.New("base path is empty")
 	}
@@ -65,16 +85,6 @@ func resolveSpinnerPaths(basePath string) (*spinnerPathSet, error) {
 		contentPath:    filepath.Join(cachePath, server.ContentDatabaseFilename),
 		staticPath:     filepath.Join(cachePath, "www", "static"),
 	}
-	config, _, err := game.LoadConfig(pathSet.configPath)
-	if err != nil {
-		return nil, fmt.Errorf("configLoad: %w", err)
-	}
-	contentPath, err := config.ContentPath(pathSet.configPath)
-	if err != nil {
-		return nil, fmt.Errorf("contentPath: %w", err)
-	}
-	pathSet.contentPath = filepath.Join(contentPath, server.ContentDatabaseFilename)
-	pathSet.staticPath = filepath.Join(contentPath, "www", "static")
 	return pathSet, nil
 }
 
@@ -88,6 +98,9 @@ func (a *App) initialize(ctx context.Context, basePath string) {
 		a.failSubsystem("Game", fmt.Errorf("pathResolve: %w", err))
 		return
 	}
+	a.mu.Lock()
+	a.serviceSet.paths = pathSet
+	a.mu.Unlock()
 	a.startPreparationTiming(pathSet.logPath)
 	a.recordPreparationProgress("Runtime", "Preparing launcher runtime", 0)
 	err = prepareSpinnerRuntime(pathSet)
@@ -113,7 +126,7 @@ func (a *App) initialize(ctx context.Context, basePath string) {
 		a.failSubsystem("Profile", fmt.Errorf("profilePrepare: %w", err))
 		return
 	}
-	_, _, err = game.LoadConfig(pathSet.configPath)
+	_, _, err = server.LoadLocalConfiguration(pathSet.configPath)
 	if err != nil {
 		a.failSubsystem("Server", fmt.Errorf("configPrepare: %w", err))
 		return

@@ -30,6 +30,7 @@ type Options struct {
 	BuildVersion    string
 	Logger          *log.Logger
 	ResolveUserName func(int64) string
+	StorageCapacity func(string) (uint64, uint64, bool)
 }
 
 type trafficEvent struct {
@@ -62,6 +63,13 @@ type objectFlow struct {
 	lastMovementAt time.Time
 }
 
+const duplicateDeleteContext = "duplicate object delete"
+
+type peerObjectFlows struct {
+	generation uint64
+	objects    map[uint32]objectFlow
+}
+
 type clientFlow struct {
 	position       raknet.Vector3
 	lastReportedAt time.Time
@@ -70,16 +78,17 @@ type clientFlow struct {
 }
 
 type anomaly struct {
-	Actor         Actor
-	Context       string
-	Fingerprint   string
-	ObjectID      uint32
-	IsPersistent  bool
-	TriggeredAt   time.Time
-	Detector      string
-	EventSequence uint64
-	Threshold     float64
-	Measured      float64
+	Actor          Actor
+	Context        string
+	Fingerprint    string
+	ObjectID       uint32
+	TriggeredAt    time.Time
+	Detector       string
+	Category       string
+	PeerGeneration uint64
+	EventSequence  uint64
+	Threshold      float64
+	Measured       float64
 }
 
 type incident struct {
@@ -141,6 +150,7 @@ type automaticIncidentRecord struct {
 	LastFailure      string                 `json:"last_failure,omitempty"`
 	TriggeredAt      time.Time              `json:"triggered_at,omitempty"`
 	Detector         string                 `json:"detector,omitempty"`
+	Category         string                 `json:"category,omitempty"`
 	DetectorVersion  uint32                 `json:"detector_version,omitempty"`
 	EventSequence    uint64                 `json:"event_sequence,omitempty"`
 	Threshold        float64                `json:"threshold,omitempty"`
@@ -170,7 +180,7 @@ type Service struct {
 	nextIncident             atomic.Uint64
 	lastAutomaticAt          time.Time
 	isAutomaticDumpRunning   bool
-	flowsByRemote            map[string]map[uint32]objectFlow
+	flowsByRemote            map[string]peerObjectFlows
 	clientFlowsByRemote      map[string]map[uint32]clientFlow
 	clientObjectDriftFlows   map[string]clientObjectDriftFlow
 	movements                []movementSample
@@ -179,6 +189,7 @@ type Service struct {
 	incidentsByID            map[string]incident
 	ignoredFingerprint       map[string]struct{}
 	automaticIncidents       map[string]*automaticIncident
+	capturedCategories       map[automaticCategory]*automaticIncident
 	automaticIncidentOrder   []string
 	automaticIncidentRecords []automaticIncidentRecord
 	evictedIncidentCount     uint64
@@ -190,6 +201,7 @@ type Service struct {
 	automaticWake            chan struct{}
 	close                    chan struct{}
 	closeOnce                sync.Once
+	storageCapacity          func(string) (uint64, uint64, bool)
 }
 
 // New creates one configured snapshot service and starts its bounded artifact worker.
@@ -228,13 +240,15 @@ func New(options Options) (*Service, error) {
 		mode:           mode, bufferDuration: bufferDuration, delay: delay,
 		buildVersion: options.BuildVersion, logger: logger,
 		resolveUserName:        options.ResolveUserName,
-		flowsByRemote:          make(map[string]map[uint32]objectFlow),
+		flowsByRemote:          make(map[string]peerObjectFlows),
 		clientFlowsByRemote:    make(map[string]map[uint32]clientFlow),
 		clientObjectDriftFlows: make(map[string]clientObjectDriftFlow),
 		nackTimesByRemote:      make(map[string][]time.Time),
 		incidentsByID:          make(map[string]incident),
 		ignoredFingerprint:     make(map[string]struct{}),
 		automaticIncidents:     make(map[string]*automaticIncident),
+		capturedCategories:     make(map[automaticCategory]*automaticIncident),
+		storageCapacity:        options.StorageCapacity,
 		clientMonitor:          newClientProbeMonitor(),
 		automaticWake:          make(chan struct{}, 1), close: make(chan struct{}),
 	}
@@ -422,14 +436,18 @@ func (e *Service) detectLocked(event trafficEvent) (autoRequest, bool) {
 	if event.Direction != raknet.ObservationServerToClient {
 		return autoRequest{}, false
 	}
-	if event.Stage != raknet.ObservationDatagram || event.PacketID == 0 {
+	if event.Stage != raknet.ObservationDatagram || event.PacketID == 0 || event.ObjectID == 0 {
 		return autoRequest{}, false
 	}
-	flows := e.flowsByRemote[event.Remote]
-	if flows == nil {
-		flows = make(map[uint32]objectFlow)
-		e.flowsByRemote[event.Remote] = flows
+	peer := e.flowsByRemote[event.Remote]
+	if event.PeerGeneration < peer.generation {
+		return autoRequest{}, false
 	}
+	if peer.objects == nil || peer.generation != event.PeerGeneration {
+		peer = peerObjectFlows{generation: event.PeerGeneration, objects: make(map[uint32]objectFlow)}
+		e.flowsByRemote[event.Remote] = peer
+	}
+	flows := peer.objects
 	flow := flows[event.ObjectID]
 	switch raknet.PacketID(event.PacketID) {
 	case raknet.ObjectCreate:
@@ -448,7 +466,7 @@ func (e *Service) detectLocked(event trafficEvent) (autoRequest, bool) {
 		}
 	case raknet.ObjectDelete:
 		if flow.isCreated && flow.isDeleted {
-			return e.anomalyRequestLocked(event, "duplicate object delete"), true
+			return e.anomalyRequestLocked(event, duplicateDeleteContext), true
 		}
 		if flow.isCreated {
 			flow.isDeleted = true
@@ -489,7 +507,8 @@ func (e *Service) detectNACKBurstLocked(event trafficEvent) (autoRequest, bool) 
 	return autoRequest{anomaly: anomaly{
 		Actor:       Actor{Remote: event.Remote},
 		Context:     fmt.Sprintf("RakNet packet-loss burst: %d NACK datagrams in 2s", len(kept)),
-		Fingerprint: event.Remote + ":nack-burst",
+		Fingerprint: fmt.Sprintf("%s:%d:nack-burst", event.Remote, event.PeerGeneration),
+		Category:    "packet_loss_burst", PeerGeneration: event.PeerGeneration,
 		TriggeredAt: event.CapturedAt, Detector: "nack_burst",
 		EventSequence: event.Sequence, Threshold: 3, Measured: float64(len(kept)),
 	}}, true
@@ -542,10 +561,11 @@ func (e *Service) detectClientDriftLocked(event trafficEvent) (autoRequest, bool
 		"client movement drift object=%d distance=%.2f allowed=%.2f interval=%s",
 		command.Common.ObjectID, distance, allowedDistance, elapsed.Round(time.Millisecond),
 	)
-	fingerprint := fmt.Sprintf("%s:movement-drift:%d", event.Remote, command.Common.ObjectID)
+	fingerprint := fmt.Sprintf("%s:%d:movement-drift:%d", event.Remote, event.PeerGeneration, command.Common.ObjectID)
 	return autoRequest{anomaly: anomaly{
 		Actor: Actor{Remote: event.Remote}, Context: contextText,
 		Fingerprint: fingerprint, ObjectID: command.Common.ObjectID,
+		Category: "client_movement_drift", PeerGeneration: event.PeerGeneration,
 		TriggeredAt: event.CapturedAt, Detector: "client_movement_drift",
 		EventSequence: event.Sequence, Threshold: float64(allowedDistance),
 		Measured: float64(distance),
@@ -560,18 +580,29 @@ func vectorDistance(left raknet.Vector3, right raknet.Vector3) float32 {
 }
 
 func (e *Service) anomalyRequestLocked(event trafficEvent, contextText string) autoRequest {
-	fingerprint := fmt.Sprintf("%s:%02x:%d", event.Remote, event.PacketID, event.ObjectID)
+	fingerprint := fmt.Sprintf("%s:%d:%02x:%d", event.Remote, event.PeerGeneration, event.PacketID, event.ObjectID)
+	category := "locomotion_before_intent"
+	if contextText == duplicateDeleteContext {
+		category = "duplicate_object_delete"
+	}
 	return autoRequest{anomaly: anomaly{
 		Actor: Actor{Remote: event.Remote}, Context: contextText,
 		Fingerprint: fingerprint, ObjectID: event.ObjectID,
 		TriggeredAt: event.CapturedAt, Detector: "server_lifecycle",
+		Category: category, PeerGeneration: event.PeerGeneration,
 		EventSequence: event.Sequence,
 	}}
 }
 
 func (e *Service) run() {
+	err := e.pruneAutomaticArchives(0, true)
+	if err != nil {
+		e.logger.Printf("Sync Snapshot automatic archive cleanup failed: %v", err)
+	}
 	ticker := time.NewTicker(clientProbePollInterval)
 	defer ticker.Stop()
+	cleanupTicker := time.NewTicker(time.Minute)
+	defer cleanupTicker.Stop()
 	for {
 		select {
 		case <-e.close:
@@ -581,6 +612,8 @@ func (e *Service) run() {
 			e.processAutomatic()
 		case <-e.automaticWake:
 			e.processAutomatic()
+		case <-cleanupTicker.C:
+			e.pruneAutomaticCategories()
 		}
 	}
 }
@@ -589,6 +622,19 @@ func (e *Service) retainAutomatic(request autoRequest) {
 	now := time.Now().UTC()
 	e.mu.Lock()
 	if e.mode != ModeAuto {
+		e.mu.Unlock()
+		return
+	}
+	category := request.anomaly.automaticCategory()
+	if category.remote == "" || category.generation == 0 {
+		e.mu.Unlock()
+		return
+	}
+	if captured := e.capturedCategories[category]; captured != nil {
+		captured.lastObservedAt = now
+		captured.observationCount++
+		captured.suppressionCount++
+		e.suppressedCount++
 		e.mu.Unlock()
 		return
 	}
@@ -610,6 +656,16 @@ func (e *Service) retainAutomatic(request autoRequest) {
 			current.suppressionCount++
 			e.suppressedCount++
 		}
+		e.mu.Unlock()
+		return
+	}
+	for _, pending := range e.automaticIncidents {
+		if pending.state == automaticIncidentResolved || pending.anomaly.automaticCategory() != category {
+			continue
+		}
+		pending.observationCount++
+		pending.suppressionCount++
+		e.suppressedCount++
 		e.mu.Unlock()
 		return
 	}
@@ -652,11 +708,18 @@ func (e *Service) processAutomatic() {
 		return
 	}
 	var current *automaticIncident
-	for _, fingerprint := range e.automaticIncidentOrder {
+	for index := 0; index < len(e.automaticIncidentOrder); {
+		fingerprint := e.automaticIncidentOrder[index]
 		candidate := e.automaticIncidents[fingerprint]
-		if candidate == nil ||
-			(candidate.state != automaticIncidentPending && candidate.state != automaticIncidentResolved) ||
-			candidate.nextAttemptAt.After(now) {
+		if candidate == nil || candidate.state == automaticIncidentResolved ||
+			now.Sub(candidate.firstObservedAt) > automaticIncidentLifetime ||
+			(candidate.anomaly.Detector == "object_position_drift" && now.Sub(candidate.lastObservedAt) > 3*time.Second) ||
+			e.capturedCategories[candidate.anomaly.automaticCategory()] != nil {
+			e.removeAutomaticIncidentLocked(fingerprint)
+			continue
+		}
+		if candidate.nextAttemptAt.After(now) {
+			index++
 			continue
 		}
 		current = candidate
@@ -671,7 +734,19 @@ func (e *Service) processAutomatic() {
 	e.isAutomaticDumpRunning = true
 	request := autoRequest{anomaly: current.anomaly}
 	isTriggerStateNeeded := current.triggerState == nil
+	triggerState := current.triggerState
+	triggerCapture := current.triggerCapture
+	triggerTransport := current.triggerTransport
+	triggerMovements := current.triggerMovements
+	transportProvider := e.transportProvider
 	e.mu.Unlock()
+	if !isAutomaticPeerActive(transportProvider, request.anomaly.automaticCategory(), now) {
+		e.mu.Lock()
+		e.isAutomaticDumpRunning = false
+		e.removeAutomaticIncidentLocked(request.anomaly.Fingerprint)
+		e.mu.Unlock()
+		return
+	}
 	if isTriggerStateNeeded {
 		triggerState, triggerCapture := e.captureState(
 			context.Background(), request.anomaly.Actor,
@@ -683,7 +758,11 @@ func (e *Service) processAutomatic() {
 			retained.triggerState = &triggerState
 			retained.triggerCapture = triggerCapture
 			retained.triggerTransport = triggerTransport
-			retained.state = automaticIncidentPending
+			if retained.resolvedAt.IsZero() {
+				retained.state = automaticIncidentPending
+			} else {
+				retained.state = automaticIncidentResolved
+			}
 			retained.nextAttemptAt = time.Now().UTC().Add(2 * time.Second)
 		}
 		e.isAutomaticDumpRunning = false
@@ -693,17 +772,34 @@ func (e *Service) processAutomatic() {
 
 	result, err := e.dump(context.Background(), dumpRequest{
 		Actor: request.anomaly.Actor, Trigger: "automatic",
-		Context: request.anomaly.Context, Fingerprint: request.anomaly.Fingerprint,
+		Category: request.anomaly.Category,
+		Context:  request.anomaly.Context, Fingerprint: request.anomaly.Fingerprint,
 		ObjectID:     request.anomaly.ObjectID,
-		TriggerState: current.triggerState, TriggerStateCapture: current.triggerCapture,
-		TriggerTransportDiagnostics: current.triggerTransport,
-		TriggerMovements:            current.triggerMovements,
+		TriggerState: triggerState, TriggerStateCapture: triggerCapture,
+		TriggerTransportDiagnostics: triggerTransport,
+		TriggerMovements:            triggerMovements,
 		TriggeredAt:                 request.anomaly.TriggeredAt,
 	})
 	if err != nil {
 		e.mu.Lock()
 		e.isAutomaticDumpRunning = false
 		retained := e.automaticIncidents[request.anomaly.Fingerprint]
+		if errors.Is(err, errAutomaticStorageLow) {
+			e.lastAutomaticAt = time.Now().UTC()
+			e.removeAutomaticIncidentLocked(request.anomaly.Fingerprint)
+			retained = nil
+		}
+		if errors.Is(err, errAutomaticArchiveTooLarge) {
+			e.lastAutomaticAt = time.Now().UTC()
+			current.lastFailure = err.Error()
+			current.state = automaticIncidentEvicted
+			current.triggerState = nil
+			current.triggerTransport = nil
+			current.triggerMovements = nil
+			e.capturedCategories[request.anomaly.automaticCategory()] = current
+			e.removeAutomaticIncidentLocked(request.anomaly.Fingerprint)
+			retained = nil
+		}
 		if retained != nil {
 			retained.state = automaticIncidentPending
 			if !retained.resolvedAt.IsZero() {
@@ -728,15 +824,14 @@ func (e *Service) processAutomatic() {
 	e.mu.Lock()
 	e.isAutomaticDumpRunning = false
 	e.lastAutomaticAt = time.Now().UTC()
-	retained := e.automaticIncidents[request.anomaly.Fingerprint]
-	if retained != nil {
-		retained.state = automaticIncidentCaptured
-		retained.lastFailure = ""
-		retained.nextAttemptAt = time.Time{}
-		if !retained.anomaly.IsPersistent || !retained.resolvedAt.IsZero() {
-			e.removeAutomaticIncidentLocked(request.anomaly.Fingerprint)
-		}
-	}
+	current.state = automaticIncidentCaptured
+	current.lastFailure = ""
+	current.nextAttemptAt = time.Time{}
+	current.triggerState = nil
+	current.triggerTransport = nil
+	current.triggerMovements = nil
+	e.capturedCategories[request.anomaly.automaticCategory()] = current
+	e.removeAutomaticIncidentLocked(request.anomaly.Fingerprint)
 	e.mu.Unlock()
 	// Automatic diagnostics stay in logs and archives; explicit /ss commands
 	// still return their normal chat feedback through Execute.
@@ -796,12 +891,6 @@ func (e *Service) resolveAutomaticIncidentLocked(fingerprint string, resolvedAt 
 		return
 	}
 	current.resolvedAt = resolvedAt
-	if current.state == automaticIncidentCaptured {
-		// Keep a captured fingerprint for the rest of its object identity. A
-		// brief recovery followed by another outlier should not create the same
-		// archive again after the global capture delay.
-		return
-	}
 	if current.state == automaticIncidentPending {
 		current.state = automaticIncidentResolved
 	}
@@ -809,7 +898,8 @@ func (e *Service) resolveAutomaticIncidentLocked(fingerprint string, resolvedAt 
 
 func automaticIncidentRecordFrom(current *automaticIncident) automaticIncidentRecord {
 	record := automaticIncidentRecord{
-		State: current.state, Fingerprint: current.anomaly.Fingerprint,
+		Category: current.anomaly.Category,
+		State:    current.state, Fingerprint: current.anomaly.Fingerprint,
 		Context: current.anomaly.Context, Actor: current.anomaly.Actor,
 		ObjectID: current.anomaly.ObjectID, FirstObservedAt: current.firstObservedAt,
 		LastObservedAt: current.lastObservedAt, ObservationCount: current.observationCount,
@@ -832,6 +922,7 @@ func automaticIncidentRecordFrom(current *automaticIncident) automaticIncidentRe
 
 func (e *Service) automaticIncidentRecordsLocked() []automaticIncidentRecord {
 	records := append([]automaticIncidentRecord(nil), e.automaticIncidentRecords...)
+	records = append(records, e.capturedAutomaticRecordsLocked()...)
 	for _, fingerprint := range e.automaticIncidentOrder {
 		current := e.automaticIncidents[fingerprint]
 		if current != nil {
@@ -936,7 +1027,7 @@ func (e *Service) setMode(mode Mode) {
 		e.events = nil
 		e.bufferedByte = 0
 		e.droppedEventTimes = nil
-		e.flowsByRemote = make(map[string]map[uint32]objectFlow)
+		e.flowsByRemote = make(map[string]peerObjectFlows)
 		e.clientFlowsByRemote = make(map[string]map[uint32]clientFlow)
 		e.nackTimesByRemote = make(map[string][]time.Time)
 	}

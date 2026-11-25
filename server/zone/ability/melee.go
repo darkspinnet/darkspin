@@ -90,8 +90,7 @@ func (e MeleeArc) angle(x float64, y float64) float64 {
 }
 
 func IsHostileMeleeTarget(enemy zonenpc.Snapshot) bool {
-	return enemy.Plan.ObjectID != 0 && enemy.IsPublished && !enemy.IsDefeated &&
-		enemy.HitPoint > 0 && enemy.Faction == zonenpc.FactionNonPlayerAligned
+	return IsHostileTarget(enemy)
 }
 
 // BestTarget keeps the first enumerated hostile candidate on equal native

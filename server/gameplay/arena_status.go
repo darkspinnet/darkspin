@@ -118,7 +118,7 @@ func (e gameplayPeerSession) isArenaHitSilenceActive(at time.Time) bool {
 func (e gameplayPeerSession) arenaSilenceAmount(at time.Time) float32 {
 	amount := e.projectPassiveCreature(e.deployedCreatureIndex, at).PartAttribute[14]
 	amount += float32(e.fixtureSilenceCount())
-	if at.Before(e.enemySilenceExpiresAt) {
+	if e.isHeroControlActive(heroControlSilence, at) {
 		amount++
 	}
 	for _, status := range e.arenaHitStatuses {
@@ -260,6 +260,18 @@ func (e campaignAbilityCommandRuntime) applyArenaTargetStatusLocked(sessionKey s
 		if definition.StatusKind == sim.AbilityStatusKindBanish && member.isArenaBanished(e.now()) {
 			continue
 		}
+		targetDuration := duration
+		if isArenaNativeModifierDuration(definition, duration) {
+			if member.deployedObjectID != objectID || int(member.deployedCreatureIndex) >= len(member.binding.Creatures) {
+				return nil, errors.New("arena duration recipient unavailable")
+			}
+			var err error
+			targetDuration, err = projectRecipientModifierDuration(duration, 32,
+				member.binding.Creatures[member.deployedCreatureIndex])
+			if err != nil {
+				return nil, fmt.Errorf("arenaModifierDuration: %w", err)
+			}
+		}
 		// Build-103 CanUseModifier chunks 453/549/53 reject their specific
 		// immunity attributes only in IsChainGame. Arena is not that mode;
 		// retain the independent universal debuff and Overdrive guards above.
@@ -284,8 +296,8 @@ func (e campaignAbilityCommandRuntime) applyArenaTargetStatusLocked(sessionKey s
 			physicalIncrease: definition.StatusPhysicalIncrease,
 			damageBuff:       definition.StatusDamageBuff, energyIncrease: definition.StatusEnergyIncrease,
 			isCasterUnique: (definition.Name == "TCShieldedSentinelSupport" || definition.Name == "MissileTempestSupport") && definition.StatusKind == sim.AbilityStatusKindSlow,
-			duration:       duration, revision: 1,
-			expiresAt: e.now().Add(duration)}
+			duration:       targetDuration, revision: 1,
+			expiresAt: e.now().Add(targetDuration)}
 		if definition.Name == "VoodooTempestSupport" {
 			status.kind = arenaVoodooCurse
 		}
@@ -296,14 +308,14 @@ func (e campaignAbilityCommandRuntime) applyArenaTargetStatusLocked(sessionKey s
 		status.instanceID = instanceID
 		createPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 			TargetID: objectID, ModifierGUID: status.modifierID, InstanceID: instanceID,
-			DurationMilliseconds: uint32(duration.Milliseconds()), StackCount: 1,
+			DurationMilliseconds: uint32(targetDuration.Milliseconds()), StackCount: 1,
 			StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 			IsBound: status.kind == sim.AbilityStatusKindStun})
 		if err != nil {
 			return nil, status.discard("arenaStatusCreate", err)
 		}
 		expiry := arenaHitStatusExpiry{status: status, revision: status.revision}
-		status.cancel, err = e.registry.timer.Schedule(duration, expiry.expire)
+		status.cancel, err = e.registry.timer.Schedule(targetDuration, expiry.expire)
 		if err == nil && status.cancel == nil {
 			err = errors.New("status expiry cancellation unavailable")
 		}

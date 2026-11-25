@@ -70,6 +70,7 @@ type API struct {
 	qosPort             uint16
 	logger              *log.Logger
 	resumeActivator     ResumeActivator
+	partDetailConverter PartDetailConverter
 	isModded            bool
 	isDedicated         bool
 	broadcastMutex      sync.Mutex
@@ -77,21 +78,22 @@ type API struct {
 }
 
 type APIOptions struct {
-	BotPortraitFinder BotPortraitFinder
-	IsModded          bool
-	IsDedicated       bool
-	UserManager       UserManager
-	Template          *sporenet.TemplateDatabase
-	PartCatalog       *PartCatalog
-	Vendor            *sporenet.Vendor
-	PartShopRules     sporenet.PartShopRules
-	Storage           string
-	StaticFileSystem  fs.FS
-	Host              string
-	HTTPPort          uint16
-	QoSPort           uint16
-	Logger            *log.Logger
-	ResumeActivator   ResumeActivator
+	BotPortraitFinder   BotPortraitFinder
+	IsModded            bool
+	IsDedicated         bool
+	UserManager         UserManager
+	Template            *sporenet.TemplateDatabase
+	PartCatalog         *PartCatalog
+	Vendor              *sporenet.Vendor
+	PartShopRules       sporenet.PartShopRules
+	Storage             string
+	StaticFileSystem    fs.FS
+	Host                string
+	HTTPPort            uint16
+	QoSPort             uint16
+	Logger              *log.Logger
+	ResumeActivator     ResumeActivator
+	PartDetailConverter PartDetailConverter
 }
 
 func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
@@ -105,6 +107,7 @@ func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
 		storage: options.Storage, staticFileSystem: options.StaticFileSystem,
 		host: options.Host, httpPort: options.HTTPPort, qosPort: options.QoSPort, logger: logger,
 		resumeActivator:     options.ResumeActivator,
+		partDetailConverter: options.PartDetailConverter,
 		isModded:            options.IsModded,
 		isDedicated:         options.IsDedicated,
 		partShopRules:       options.PartShopRules,
@@ -143,7 +146,7 @@ func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
 		{`/assets/.*`, api.static},
 	}
 	for _, route := range routes {
-		err := router.Add(route.path, []string{http.MethodGet, http.MethodPost}, route.handler)
+		err := router.Add(route.path, []string{http.MethodGet, http.MethodPost}, observedPeerHandler(route.handler))
 		if err != nil {
 			return fmt.Errorf("routeRegister[%q]: %w", route.path, err)
 		}
@@ -292,6 +295,11 @@ func (a *API) bootstrap(writer http.ResponseWriter, request *http.Request, uri *
 func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recaphttp.URI) {
 	values := requestValues(request, uri)
 	method := values.Get("method")
+	accountResponse := a.beginAccountHTTP(writer, request, method)
+	if accountResponse != nil {
+		writer = accountResponse
+		defer accountResponse.finish(request.Context())
+	}
 	if strings.EqualFold(method, "api.status.getStatus") {
 		isBroadcastIncluded := queryBool(values, "include_broadcasts", "includeBroadcasts") &&
 			a.claimBroadcast(request.RemoteAddr)
@@ -305,6 +313,9 @@ func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recap
 		return
 	}
 	user := a.userFromRequest(request, values)
+	if accountResponse != nil && user != nil {
+		accountResponse.accountID = user.AccountID()
+	}
 	if method == "" {
 		if user == nil {
 			method = "api.account.auth"
@@ -341,7 +352,6 @@ func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recap
 		a.vendorParts(writer, request, user, values.Get("transactions"))
 	case "api.inventory.updatePartStatus":
 		partIDs, partIDErr := parseUint64CSV(values.Get("part_id"))
-		canonicalizePartStatusIDs(partIDs)
 		statusCodes, statusErr := parseUint64CSV(values.Get("status"))
 		isDetailStatus := len(statusCodes) != 0
 		for _, currentStatus := range statusCodes {
@@ -355,9 +365,7 @@ func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recap
 			len(partIDs) == len(statusCodes) && isDetailStatus
 		var statusErrApply error
 		if isSuccess {
-			_, statusErrApply = a.userManager.ConvertPartsToDetail(
-				request.Context(), user, partIDs,
-			)
+			statusErrApply = a.convertPartsToDetail(request.Context(), user, partIDs)
 			isSuccess = statusErrApply == nil
 		}
 		if a.logger != nil {
@@ -810,11 +818,17 @@ func parseUint64CSV(encoded string) ([]uint64, error) {
 func canonicalizePartStatusIDs(partIDs []uint64) {
 	const clientPartStatusNamespace = uint64(1) << 32
 	const clientPartStatusLimit = clientPartStatusNamespace << 1
+	const clientDetailNamespace = uint64(1) << 31
 	for index, partID := range partIDs {
-		if partID < clientPartStatusNamespace || partID >= clientPartStatusLimit {
+		if partID >= clientPartStatusNamespace && partID < clientPartStatusLimit {
+			partIDs[index] = partID - clientPartStatusNamespace
 			continue
 		}
-		partIDs[index] = partID - clientPartStatusNamespace
+		// Build 103 also sends Create Detail IDs with bit 31 set (for
+		// example, 2147483749 refers to owned part 101).
+		if partID >= clientDetailNamespace && partID < clientPartStatusNamespace {
+			partIDs[index] = partID - clientDetailNamespace
+		}
 	}
 }
 
@@ -1445,11 +1459,6 @@ func (a *API) serveStorageFile(writer http.ResponseWriter, request *http.Request
 	http.ServeFile(writer, request, path)
 }
 
-func (a *API) userFromRequest(request *http.Request, values interface{ Get(string) string }) *sporenet.User {
-	token := authTokenFromRequest(request, values)
-	return a.userManager.UserByAuthToken(token)
-}
-
 func authTokenFromRequest(request *http.Request, values interface{ Get(string) string }) string {
 	token := values.Get("token")
 	key := values.Get("key")
@@ -1839,10 +1848,9 @@ func profileAbilityProjectedNumber(template *sporenet.TemplateCreature, stats []
 	if isHealing {
 		projected := number
 		if isFound && coefficient != 0 {
-			// Game 5.3.0.103 sub_43A170 routes damage tokens through
-			// sub_9E5B10/sub_9E4E60. The latter applies the authored coefficient to
-			// the class-selected primary attribute relative to the build's -1 base.
-			projected *= 1 + (primary+1)*coefficient
+			// Build-103 healing uses the same MagicNumbers baseline as damage
+			// through sub_9E5550 -> sub_9E4E60.
+			projected *= 1 + (primary-float64(PrimaryAttributeIgnoreAmount))*coefficient
 		}
 		return math.Floor(projected)
 	}
@@ -1854,9 +1862,11 @@ func profileAbilityProjectedNumber(template *sporenet.TemplateCreature, stats []
 		return 0
 	}
 	if isMinimumDamage {
-		return float64(projected.Minimum)
+		// Build-103 43AFC3 uses CVTSS2SI with the normal nearest-even
+		// rounding mode. Display conversion does not belong in combat math.
+		return math.RoundToEven(float64(projected.Minimum))
 	}
-	return float64(projected.Maximum)
+	return math.Ceil(float64(projected.Maximum))
 }
 
 func profileAbilityDamage(

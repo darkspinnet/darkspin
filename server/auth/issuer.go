@@ -66,7 +66,27 @@ func (e *JWTIssuer) IssueForAccount(identity string, accountID int64, lifetime t
 	return token, nil
 }
 
+// IssueForCredential binds a launch to the current durable credential revision.
+func (e *JWTIssuer) IssueForCredential(identity string, accountID, revision int64, lifetime time.Duration, clientVersion string) (string, error) {
+	if accountID <= 0 || revision <= 0 {
+		return "", errors.New("invalid account credential binding")
+	}
+	token, err := e.issueCredential(identity, accountID, revision, lifetime, clientVersion)
+	if err != nil {
+		return "", fmt.Errorf("credentialToken: %w", err)
+	}
+	return token, nil
+}
+
 func (e *JWTIssuer) issue(identity string, accountID int64, lifetime time.Duration, clientVersion string) (string, error) {
+	token, err := e.issueCredential(identity, accountID, 0, lifetime, clientVersion)
+	if err != nil {
+		return "", fmt.Errorf("legacyToken: %w", err)
+	}
+	return token, nil
+}
+
+func (e *JWTIssuer) issueCredential(identity string, accountID, revision int64, lifetime time.Duration, clientVersion string) (string, error) {
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
 		return "", errors.New("issue JWT: identity is empty")
@@ -82,8 +102,9 @@ func (e *JWTIssuer) issue(identity string, accountID int64, lifetime time.Durati
 	claims, err := json.Marshal(map[string]any{
 		"iss": e.issuer, "aud": e.audience, "sub": identity, "email": identity,
 		"nbf": now.Unix(), "exp": now.Add(lifetime).Unix(),
-		"client_version": clientVersion,
-		"account_id":     accountID,
+		"client_version":      clientVersion,
+		"account_id":          accountID,
+		"credential_revision": revision,
 	})
 	if err != nil {
 		return "", fmt.Errorf("claimsMarshal: %w", err)

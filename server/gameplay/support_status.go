@@ -2,7 +2,6 @@ package gameplay
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sporenet"
@@ -90,7 +89,7 @@ func (e *gameplayPeerSession) stopNPCSupportModifiers(targetObjectID uint32, poo
 			continue
 		}
 		guid := run.record.GUID
-		if guid != util.HashID("ScopeThorns") && guid != util.HashID("Modifier_FireThorns") &&
+		if run.teleportControl == nil && guid != util.HashID("ScopeThorns") && guid != util.HashID("Modifier_FireThorns") &&
 			guid != util.HashID("ScopeDebuff") && guid != util.HashID("CitadelSpecialOne_EnergyDefenseDebuff") &&
 			guid != util.HashID(nativeSilenceChild) && guid != util.HashID("Chilled") && guid != util.HashID("SlowNovaModifier") {
 			continue
@@ -101,11 +100,9 @@ func (e *gameplayPeerSession) stopNPCSupportModifiers(targetObjectID uint32, poo
 		delete(e.campaignNPCModifiers, instanceID)
 		e.zone.Effect().Remove(instanceID)
 		if guid == util.HashID(nativeSilenceChild) {
-			if run.record.TargetObjectID == e.deployedObjectID && e.enemySilenceExpiresAt == run.record.ExpiresAt {
-				e.enemySilenceExpiresAt = time.Time{}
-			}
-			e.zone.Companion().ClearSilence(run.record.TargetObjectID, run.record.ExpiresAt)
-			e.zone.NPCs().ClearSilence(run.record.TargetObjectID, run.record.ExpiresAt)
+			e.clearHeroControl(run.instanceID, run.record.TargetObjectID)
+			e.zone.Companion().ClearSilenceModifier(run.record.TargetObjectID, run.instanceID)
+			e.zone.NPCs().ClearSilenceModifier(run.record.TargetObjectID, run.instanceID)
 		}
 		isCreated, err := run.release(pool)
 		if err != nil {

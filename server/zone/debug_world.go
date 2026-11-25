@@ -54,6 +54,11 @@ func (e *Zone) ScenarioWorldState(ctx context.Context, userID, generation uint64
 	if e.startedAt.IsZero() || capturedAt.Before(e.startedAt) {
 		result.PickupUnavailableReason = "zone simulation clock is unavailable"
 	} else {
+		equipmentCount, equipmentErr := e.info.Pickups.ScenarioEquipmentCount(ctx, capturedAt.Sub(e.startedAt))
+		if equipmentErr != nil {
+			return result, fmt.Errorf("worldEquipment: %w", equipmentErr)
+		}
+		result.EquipmentDropCount = equipmentCount
 		pickups, pickupErr := e.info.Orbs.ScenarioPickups(ctx, e.info.Pickups, result.Hero.Position, capturedAt, capturedAt.Sub(e.startedAt))
 		if pickupErr != nil {
 			return result, fmt.Errorf("worldPickup: %w", pickupErr)

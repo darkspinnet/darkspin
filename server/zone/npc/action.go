@@ -140,6 +140,7 @@ type ActionProfile struct {
 	ProjectileFlightDuration         time.Duration
 	ProjectileShotInterval           time.Duration
 	ProjectileShotCount              uint32
+	ProjectileTargetRadius           float32
 	ProjectileShotDeadlines          []time.Duration
 	ProjectileShotAngles             []float32
 	HomingDelay                      time.Duration
@@ -184,6 +185,7 @@ type ActionProfile struct {
 	IsProjectileParallelVolley       bool
 	IsProjectileTrackingBetweenShots bool
 	IsProjectileLeadingTarget        bool
+	IsProjectileHoming               bool
 	IsProjectilePiercing             bool
 	IsProjectileCloseOffsetXFound    bool
 	IsProjectileCloseOffsetYFound    bool
@@ -204,6 +206,12 @@ func (e ActionProfile) Clone() ActionProfile {
 
 func (e ActionProfile) IsEqual(other ActionProfile) bool {
 	return reflect.DeepEqual(e, other)
+}
+
+// IsHomingProjectile permits an authored zero homing delay. Existing profiles
+// that use a positive delay as their enablement retain their current behavior.
+func (e ActionProfile) IsHomingProjectile() bool {
+	return e.IsProjectileHoming || e.HomingDelay > 0
 }
 
 func (e ActionProfile) ModifierGUID() uint32 {
@@ -893,7 +901,7 @@ func scaldronBossChainLightningProfile(nounName string) (ActionProfile, bool) {
 		DamageType:                3,
 		DamageSource:              1,
 		ModifierName:              "CryosBossShock",
-		ModifierDuration:          2 * time.Second,
+		ModifierDuration:          2500 * time.Millisecond,
 		ModifierChance:            100,
 		MaximumTargetCount:        5,
 		TrailEffectName:           "cryos_boss_chain_lightning_attack_beam_effect.ServerEventDef",
@@ -1076,7 +1084,9 @@ func ZelemMarkSeekerProfile(nounName string) (ActionProfile, bool) {
 			0, 0, 2700 * time.Millisecond, 2700 * time.Millisecond,
 			3260 * time.Millisecond, 3260 * time.Millisecond,
 		},
-		HomingDelay: 16 * time.Millisecond,
+		// Build-103 chunk 784 enables homing; its projectile-template parent
+		// supplies zero homing delay, not a positive enablement sentinel.
+		IsProjectileHoming: true,
 		ProjectileOffsets: []game.Vec3{
 			{X: 2, Y: 1, Z: -1.5}, {X: -2, Y: 1, Z: -1.5},
 			{X: 3.25, Y: 0.75, Z: -1.5}, {X: -3.25, Y: 0.75, Z: -1.5},
@@ -1361,6 +1371,8 @@ func NomadDroneLaserProfile(definition sim.AbilityDefinition) (ActionProfile, er
 		MissEffectName:     definition.MissEffectName,
 		ProjectileSpeed:    definition.Speed,
 		ProjectileDistance: definition.Distance,
+		// The drone fires while its owner-follow motion remains active.
+		IsFacingPolicyKnown: true, IsFacingSuppressed: true,
 		IsDamageProfileKnown: definition.IsDescriptorFound &&
 			definition.IsDamageTypeFound && definition.IsDamageSourceFound,
 		IsFirstAggroDurationKnown: true,
@@ -1592,9 +1604,8 @@ func cryosElementalSpecialThreeProfile(
 		MissEffectName:           "ineffective_common_small.ServerEventDef",
 		ProjectileSpeed:          projectileSpeed,
 		ProjectileDistance:       50,
-		// Keep a forward fan even when only one hero is in range.
-		ProjectileShotAngles:       []float32{-45, -30, -15, 0, 15, 30, 45},
-		ProjectileShotCount:        7,
+		// Build 103 selects one projectile per hostile target within this radius.
+		ProjectileTargetRadius:     20,
 		IsProjectileParallelVolley: true,
 		IsProjectilePiercing:       true,
 		IsDamageProfileKnown:       true,
@@ -3811,15 +3822,15 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 		return scaldronBasicMinesMeleeProfile(), true
 	case "scaldronbasicthorno.noun":
 		return scaldronBasicThornoNovaProfile(
-			4, 5, 8, 3, 6, 0.2, 0.2,
+			4, 5, 8, 12, 3, 6, 0.2, 0.2,
 		), true
 	case "scaldronbasicthorno_2.noun":
 		return scaldronBasicThornoNovaProfile(
-			6, 7, 12, 3, 5, 0.333, 0.5,
+			6, 7, 12, 16, 3, 5, 0.333, 0.5,
 		), true
 	case "scaldronbasicthorno_3.noun":
 		return scaldronBasicThornoNovaProfile(
-			8, 9, 16, 2, 4, 0.5, 1,
+			8, 9, 16, 20, 2, 4, 0.5, 1,
 		), true
 	case "scaldronbasicblink.noun":
 		return scaldronBasicBlinkAttackProfile(
@@ -4665,23 +4676,27 @@ func scaldronBasicNestleMeleeProfile(cooldown time.Duration) ActionProfile {
 }
 
 func ScaldronBasicNestleWanderProfile(nounName string) (ActionProfile, bool) {
+	var duration time.Duration
 	switch strings.ToLower(strings.TrimSpace(nounName)) {
-	case "scaldronbasicnestle.noun", "scaldronbasicnestle_2.noun",
-		"scaldronbasicnestle_3.noun":
-		return ActionProfile{
-			AbilityName:            "ScaldronBasicNestle_Wander",
-			HitDelay:               time.Second,
-			ReleaseDelay:           time.Second,
-			Cooldown:               8 * time.Second,
-			MinimumRange:           3,
-			Range:                  5,
-			ModifierDuration:       3 * time.Second,
-			MovementSpeed:          7,
-			NonCombatMovementSpeed: 5.5,
-		}, true
+	case "scaldronbasicnestle.noun":
+		duration = 2500 * time.Millisecond
+	case "scaldronbasicnestle_2.noun":
+		duration = 2250 * time.Millisecond
+	case "scaldronbasicnestle_3.noun":
+		duration = 2 * time.Second
 	default:
 		return ActionProfile{}, false
 	}
+	return ActionProfile{
+		AbilityName:            "ScaldronBasicNestle_Wander",
+		ReleaseDelay:           time.Second,
+		Cooldown:               8 * time.Second,
+		MinimumRange:           2.5,
+		Range:                  5,
+		ModifierDuration:       duration,
+		MovementSpeed:          7,
+		NonCombatMovementSpeed: 5.5,
+	}, true
 }
 
 func scaldronBasicMinesMeleeProfile() ActionProfile {
@@ -4781,19 +4796,17 @@ func boomerDeathDetonationProfile(
 }
 
 func scaldronBasicThornoNovaProfile(
-	attackRange float32, radius float32, maximumTargetCount uint32,
+	attackRange float32, radius float32, shotCount uint32, projectileSpeed float32,
 	minimumDamage float32, maximumDamage float32,
 	physicalDamageReduction float32, meleeDamageReflection float32,
 ) ActionProfile {
 	return ActionProfile{
-		Family: ActionCone, AbilityName: "ScaldronBasicThorno_ThornNova",
+		Family: ActionProjectile, AbilityName: "ScaldronBasicThorno_ThornNova",
 		AnimationName:                  "sca_minn_lf_01_attack1",
 		HitDelay:                       330 * time.Millisecond,
 		ReleaseDelay:                   time.Second,
 		Cooldown:                       6 * time.Second,
 		Range:                          attackRange,
-		Radius:                         radius,
-		Angle:                          360,
 		MovementSpeed:                  7,
 		NonCombatMovementSpeed:         5.5,
 		MinimumDamage:                  minimumDamage,
@@ -4802,8 +4815,14 @@ func scaldronBasicThornoNovaProfile(
 		DescriptorMask:                 1 << 6,
 		DamageType:                     2,
 		DamageSource:                   0,
-		MaximumTargetCount:             maximumTargetCount,
+		ProjectileNoun:                 "Ability_Fireball.Noun",
+		ProjectileSpeed:                projectileSpeed,
+		ProjectileDistance:             radius,
+		ProjectileShotCount:            shotCount,
+		IsProjectileParallelVolley:     true,
+		TrailEffectName:                "ScaldronBasicThorno_ThornProjectileTrail.ServerEventDef",
 		ImpactEffectName:               "life_common_melee_hit.ServerEventDef",
+		MissEffectName:                 "ineffective_common_small.ServerEventDef",
 		PassiveEffectName:              "ScaldronBasicThorno_ThornsPassive.ServerEventDef",
 		PassivePhysicalDamageReduction: physicalDamageReduction,
 		PassiveMeleeDamageReflection:   meleeDamageReflection,

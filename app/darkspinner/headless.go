@@ -17,10 +17,10 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/diagnostic"
 	"github.com/darkspinnet/darkspin/server/game"
 	server "github.com/darkspinnet/darkspin/server/runtime"
 )
@@ -60,30 +60,14 @@ func runHeadless(app *App, isBrowserAutoOpenEnabled bool) error {
 		return fmt.Errorf("handlerCreate: %w", err)
 	}
 	app.launcherHandler = handler
-	address, bootstrapServer, bootstrapDone, err := startLauncherBootstrap(handler, token, app.lua != nil && app.GetLuaConsole().IsSelected)
+	bootstrap := &launcherBrowserHost{ctx: ctx, handler: handler, token: token}
+	address, err := bootstrap.start()
 	if err != nil {
 		return fmt.Errorf("bootstrapStart: %w", err)
 	}
-	var bootstrapStopOnce sync.Once
-	var bootstrapStopErr error
-	stopBootstrap := func() error {
-		bootstrapStopOnce.Do(func() {
-			closeErr := bootstrapServer.Close()
-			serveErr := <-bootstrapDone
-			if closeErr != nil {
-				bootstrapStopErr = fmt.Errorf("bootstrapClose: %w", closeErr)
-				return
-			}
-			if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-				bootstrapStopErr = fmt.Errorf("bootstrapServe: %w", serveErr)
-			}
-		})
-		return bootstrapStopErr
-	}
-	app.beforeServerStart = stopBootstrap
-	defer func() {
-		_ = stopBootstrap()
-	}()
+	app.beforeServerStart = bootstrap.stop
+	app.resumeLauncherHTTP = bootstrap.resume
+	defer bootstrap.close()
 	app.startup(ctx)
 	defer app.shutdown(context.Background())
 	fmt.Println("DarkSpinner browser launcher:", address)
@@ -92,9 +76,7 @@ func runHeadless(app *App, isBrowserAutoOpenEnabled bool) error {
 	return nil
 }
 
-func startLauncherBootstrap(
-	handler http.Handler, token string, isLuaMode bool,
-) (string, *http.Server, <-chan error, error) {
+func startLauncherBootstrap(handler http.Handler, token string) (string, *http.Server, <-chan error, error) {
 	basePath, err := executableDirectory()
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("executableDirectory: %w", err)
@@ -106,7 +88,7 @@ func startLauncherBootstrap(
 	port := defaultRemoteServerPort
 	_, err = os.Stat(pathSet.configPath)
 	if err == nil {
-		config, _, loadErr := game.LoadConfig(pathSet.configPath)
+		config, _, loadErr := server.LoadLocalConfiguration(pathSet.configPath)
 		if loadErr != nil {
 			return "", nil, nil, fmt.Errorf("configLoad: %w", loadErr)
 		}
@@ -116,9 +98,6 @@ func startLauncherBootstrap(
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", nil, nil, fmt.Errorf("configStat: %w", err)
-	}
-	if isLuaMode {
-		port = 0
 	}
 	listenerAddress := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port))
 	listener, err := net.Listen("tcp", listenerAddress)
@@ -215,6 +194,7 @@ func launcherMethods(app *App) map[string]any {
 		"DeleteProfile":                      app.DeleteProfile,
 		"DeleteModProfile":                   app.DeleteModProfile,
 		"DeleteRemoteProfile":                app.DeleteRemoteProfile,
+		"DeleteRemoteConnection":             app.DeleteRemoteConnection,
 		"ResetProfileDisplay":                app.ResetProfileDisplay,
 		"ResetModProfileDisplay":             app.ResetModProfileDisplay,
 		"DiscardInterruptedMission":          app.DiscardInterruptedMission,
@@ -225,12 +205,14 @@ func launcherMethods(app *App) map[string]any {
 		"GetProfiles":                        app.GetProfiles,
 		"GetRemoteProfiles":                  app.GetRemoteProfiles,
 		"GetServerConfiguration":             app.GetServerConfiguration,
+		"GetMatchmakingConfiguration":        app.GetMatchmakingConfiguration,
+		"SetMatchmakingConfiguration":        app.SetMatchmakingConfiguration,
 		"GetSquadSnapshot":                   app.GetSquadSnapshot,
-		"GetServerRulesConfiguration":        app.GetServerRulesConfiguration,
 		"GetStatus":                          app.GetStatus,
 		"GetLauncherAutomationConfiguration": app.GetLauncherAutomationConfiguration,
 		"GetLauncherLanguageConfiguration":   app.GetLauncherLanguageConfiguration,
 		"SetLauncherLocale":                  app.SetLauncherLocale,
+		"SetElevatedLaunchAllowed":           app.SetElevatedLaunchAllowed,
 		"SetAutoPatch":                       app.SetAutoPatch,
 		"SetAutoPlay":                        app.SetAutoPlay,
 		"SetLocalServicesRequired":           app.SetLocalServicesRequired,
@@ -239,6 +221,45 @@ func launcherMethods(app *App) map[string]any {
 		"IsProfileRunning":                   app.IsProfileRunning,
 		"LaunchRemoteProfile":                app.LaunchRemoteProfile,
 		"LoginRemoteProfile":                 app.LoginRemoteProfile,
+		"OpenRemoteControlPanel":             app.OpenRemoteControlPanel,
+		"OpenLocalControlPanel":              app.OpenLocalControlPanel,
+		"GetRemoteControlPanel":              app.GetRemoteControlPanel,
+		"GetRemoteControlActivity":           app.GetRemoteControlActivity,
+		"GetMyControlActivity":               app.GetMyControlActivity,
+		"GetUserControlActivity":             app.GetUserControlActivity,
+		"GetUserControlLoginHistory":         app.GetUserControlLoginHistory,
+		"CloseRemoteControlPanel":            app.CloseRemoteControlPanel,
+		"ListRemoteControlUsers":             app.ListRemoteControlUsers,
+		"ListRemoteControlDiagnostics":       app.ListRemoteControlDiagnostics,
+		"DownloadRemoteControlDiagnostic":    app.DownloadRemoteControlDiagnostic,
+		"OpenControlDiagnosticFolder":        app.OpenControlDiagnosticFolder,
+		"DeleteRemoteControlDiagnostic":      app.DeleteRemoteControlDiagnostic,
+		"ListRemoteControlHistory":           app.ListRemoteControlHistory,
+		"FilterRemoteControlHistory":         app.FilterRemoteControlHistory,
+		"SetRemoteControlUserAccess":         app.SetRemoteControlUserAccess,
+		"ModerateRemoteControlUser":          app.ModerateRemoteControlUser,
+		"TimeoutRemoteControlUser":           app.TimeoutRemoteControlUser,
+		"RenameRemoteControlAccount":         app.RenameRemoteControlAccount,
+		"ChangeRemoteControlPassword":        app.ChangeRemoteControlPassword,
+		"SetRemoteControlPassword":           app.SetRemoteControlPassword,
+		"DeleteRemoteControlAccount":         app.DeleteRemoteControlAccount,
+		"GetRemoteControlIdentity":           app.GetRemoteControlIdentity,
+		"GetRemoteControlMatchmaking":        app.GetRemoteControlMatchmaking,
+		"GetRemoteControlCapacity":           app.GetRemoteControlCapacity,
+		"SetRemoteControlCapacity":           app.SetRemoteControlCapacity,
+		"SetRemoteControlMatchmaking":        app.SetRemoteControlMatchmaking,
+		"SetRemoteControlIdentity":           app.SetRemoteControlIdentity,
+		"GetRemoteControlAnnouncements":      app.GetRemoteControlAnnouncements,
+		"SendRemoteControlAnnouncement":      app.SendRemoteControlAnnouncement,
+		"GetRemoteControlHealth":             app.GetRemoteControlHealth,
+		"GetRemoteControlUpdate":             app.GetRemoteControlUpdate,
+		"CheckRemoteControlUpdate":           app.CheckRemoteControlUpdate,
+		"ListRemoteControlSessions":          app.ListRemoteControlSessions,
+		"RevokeRemoteControlSession":         app.RevokeRemoteControlSession,
+		"RevokeOtherRemoteControlSessions":   app.RevokeOtherRemoteControlSessions,
+		"GetRemoteControlMaintenance":        app.GetRemoteControlMaintenance,
+		"StartRemoteControlMaintenance":      app.StartRemoteControlMaintenance,
+		"CancelRemoteControlMaintenance":     app.CancelRemoteControlMaintenance,
 		"OpenFirewallSettings":               app.OpenFirewallSettings,
 		"OpenReportFolder":                   app.OpenReportFolder,
 		"OpenSteamDemoInstall":               app.OpenSteamDemoInstall,
@@ -259,7 +280,6 @@ func launcherMethods(app *App) map[string]any {
 		"SetIdentity":                        app.SetIdentity,
 		"SetServerConfiguration":             app.SetServerConfiguration,
 		"SetServerSetup":                     app.SetServerSetup,
-		"SetServerRulesConfiguration":        app.SetServerRulesConfiguration,
 		"SetServerPort":                      app.SetServerPort,
 		"SetSkipCinematic":                   app.SetSkipCinematic,
 		"SetSkipIntro":                       app.SetSkipIntro,
@@ -309,6 +329,13 @@ func handleLauncherCall(
 	if err != nil {
 		writeLauncherResponse(writer, browserCallResponse{Error: "invalid request"})
 		return
+	}
+	if methodName == "DownloadRemoteControlDiagnostic" {
+		err = http.NewResponseController(writer).SetWriteDeadline(time.Now().Add(diagnostic.DownloadTimeout + 15*time.Second))
+		if err != nil && !errors.Is(err, http.ErrNotSupported) {
+			writeLauncherResponse(writer, browserCallResponse{Error: "diagnostic download deadline unavailable"})
+			return
+		}
 	}
 	result, err := invokeLauncherMethod(method, req.Arguments)
 	if err != nil {

@@ -17,6 +17,7 @@ func (e *Session) nextPursuitRevision() uint64 {
 }
 
 func (e *Actor) clearPursuit() {
+	e.pursuitPaths = nil
 	e.PursuitObjectID = 0
 	e.PursuitPosition = game.Vec3{}
 	e.PursuitRevision = 0

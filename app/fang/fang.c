@@ -1,6 +1,7 @@
 #include "client103/bootstrap.h"
 #include "zoom/zoom.h"
 #include "editor/editor.h"
+#include "orion/orion.h"
 #include "display/display.h"
 #include "shop/shop.h"
 #include "bug/bug.h"
@@ -17,6 +18,7 @@
 #include "chat/command.h"
 #include "chat/ui.h"
 #include "cinematic/cinematic.h"
+#include "tooltip/tooltip.h"
 #include "bug/history.h"
 #include "bug/record.h"
 #include "scenario/observation.h"
@@ -37,7 +39,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "_cgo_export.h"
+#include "bug/report.h"
 
 #ifndef FANG_DIAGNOSTICS
 #define FANG_DIAGNOSTICS 1
@@ -1723,36 +1725,27 @@ static void __fastcall hooked_cooldown_apply(void* object, void* ignored,
 static void trace_client_message_payload(unsigned char id, const void* data, unsigned int size) {
     char header[320];
     const char suffix[] = "\"}\r\n";
-    BYTE* payload;
     int length;
     if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) == 0 ||
         data == NULL || size == 0 || size == UINT_MAX) {
         return;
     }
-    payload = (BYTE*)HeapAlloc(GetProcessHeap(), 0, (SIZE_T)size + 1);
-    if (payload == NULL) {
-        return;
-    }
-    payload[0] = id;
-    memcpy(payload + 1, data, size);
     length = snprintf(header, sizeof(header),
         "{\"time_ms\":%llu,\"protocol\":\"client_raknet\","
         "\"kind\":\"application_receive\",\"thread\":%lu,"
         "\"frame_sequence\":%lu,\"frame_delta_bits\":%lu,\"frame_time_ms\":%lu,"
         "\"message_id\":%u,\"message_id_hex\":\"0x%02X\","
-        "\"size\":%u,\"payload_hex\":\"",
+        "\"size\":%u,\"payload_hex\":\"%02x",
         (unsigned long long)GetTickCount(), (unsigned long)GetCurrentThreadId(),
         (unsigned long)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
         (unsigned long)InterlockedCompareExchange(&snapshot_frame_delta_bits, 0, 0),
         (unsigned long)InterlockedCompareExchange(&snapshot_frame_time_ms, 0, 0),
-        (unsigned int)id, (unsigned int)id, size + 1);
-    if (length <= 0) {
-        HeapFree(GetProcessHeap(), 0, payload);
+        (unsigned int)id, (unsigned int)id, size + 1, (unsigned int)id);
+    if (length <= 0 || (size_t)length >= sizeof(header)) {
         return;
     }
     trace_hex_line(
-        header, length, payload, size + 1, suffix);
-    HeapFree(GetProcessHeap(), 0, payload);
+        header, length, (const BYTE*)data, size, suffix);
 }
 
 // Reads/modifies: observes received message fields and updates diagnostic object bookkeeping.
@@ -2960,7 +2953,7 @@ static void* __cdecl hooked_chat_text_convert(void* output, const char* text, in
         trace_client_state("chat_darkspin_command", (unsigned int)command);
     }
     if (command == 18) {
-        GoFangReportBug(command_text);
+        fang_report_bug(command_text);
     }
     if (command == 4) {
         int is_posted;
@@ -4525,6 +4518,12 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
         return 0x8;
     }
     fang_network_reset_diagnostics();
+    trace_client_state("sentry_tooltip_hook", (unsigned int)fang_tooltip_install(executable));
+    {
+        int is_orion_installed = fang_orion_install(executable);
+        trace_client_state("orion_blaster_hook", (unsigned int)is_orion_installed);
+        if (!is_orion_installed) result |= 0x8;
+    }
     executable_module = executable;
     ZeroMemory(snapshot_mode, sizeof(snapshot_mode));
     GetEnvironmentVariableA(
@@ -4983,10 +4982,4 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
     fang_client103_report(fang_history_write);
     fang_hook_report(fang_history_write);
     return result;
-}
-
-// Modifies: invokes Go-owned Fang initialization from the exported loader thread entry.
-__declspec(dllexport) DWORD WINAPI RecapInitializeThread(LPVOID parameter) {
-    (void)parameter;
-    return (DWORD)GoRecapInitialize();
 }

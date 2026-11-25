@@ -62,6 +62,12 @@ type TutorialCompletionQueueRepository interface {
 	PendingTutorialCompletionLoginNames(context.Context) ([]string, error)
 }
 
+// UserRegistrationRepository distinguishes new signups from imported or cloned profiles.
+// Creation and signup accounting must commit together.
+type UserRegistrationRepository interface {
+	CreateRegistered(context.Context, UserRecord) (int64, error)
+}
+
 // UserRepository stores durable SporeNet profiles independently of login and
 // transport sessions. Implementations must enforce unique login names.
 type UserRepository interface {

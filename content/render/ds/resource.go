@@ -3,6 +3,7 @@ package ds
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -39,10 +40,41 @@ func resourceIdentity(ordinal int, entry dbpf.Entry) string {
 }
 
 func readResource(sourcePath, identity string, ordinal int, resourceType uint32) ([]byte, error) {
-	return readResourceWithPropertyDeclaration(sourcePath, identity, ordinal, resourceType, "PROPERTYLIST")
+	payload, err := readResourceContext(context.Background(), sourcePath, identity, ordinal, resourceType)
+	if err != nil {
+		return nil, fmt.Errorf("resourceRead: %w", err)
+	}
+	return payload, nil
+}
+
+func readResourceContext(ctx context.Context, sourcePath, identity string, ordinal int, resourceType uint32) ([]byte, error) {
+	payload, err := readResourceWithPropertyDeclarationContext(ctx, sourcePath, identity, ordinal, resourceType, "PROPERTYLIST")
+	if err != nil {
+		return nil, fmt.Errorf("declarationRead: %w", err)
+	}
+	return payload, nil
 }
 
 func readResourceWithPropertyDeclaration(sourcePath, identity string, ordinal int, resourceType uint32, propertyDeclaration string) ([]byte, error) {
+	payload, err := readResourceWithPropertyDeclarationContext(context.Background(), sourcePath, identity, ordinal, resourceType, propertyDeclaration)
+	if err != nil {
+		return nil, fmt.Errorf("propertyRead: %w", err)
+	}
+	return payload, nil
+}
+
+func readResourceWithPropertyDeclarationContext(ctx context.Context, sourcePath, identity string, ordinal int, resourceType uint32, propertyDeclaration string) ([]byte, error) {
+	err := ctx.Err()
+	if err != nil {
+		return nil, fmt.Errorf("resourceContext: %w", err)
+	}
+	if resourceType == luaResourceType {
+		payload, err := readLuaResource(ctx, sourcePath, identity)
+		if err != nil {
+			return nil, fmt.Errorf("luaRead: %w", err)
+		}
+		return payload, nil
+	}
 	if scaleform.IsResourceType(resourceType) {
 		payload, err := readScaleformResource(sourcePath, identity, resourceType)
 		if err != nil {
@@ -418,7 +450,7 @@ func parseRenderDefinitions(payload []byte) (string, []renderDefinitionBlock, er
 func resourceDefinitionOrder(declaration string) int {
 	switch declaration {
 	case "PROPERTYLIST", "AUDIOLIST", "PROPSLIST", "AUDIOBASE", "GMSH", "PD", "OPAQUE", "ANIMATION",
-		"GFX", "GFXIMAGE", "DARKSPINPROPERTYLIST", "DARKSPINAUDIOBASE", "DARKSPINGMSH", "DARKSPINPD", "DARKSPINOPAQUE":
+		"LUA", "GFX", "GFXIMAGE", "DARKSPINPROPERTYLIST", "DARKSPINAUDIOBASE", "DARKSPINGMSH", "DARKSPINPD", "DARKSPINOPAQUE":
 		return 10
 	case "SNR", "PDR", "RW4", "DARKSPINSNR", "DARKSPINPDR", "DARKSPINRW4":
 		return 20
@@ -429,11 +461,22 @@ func resourceDefinitionOrder(declaration string) int {
 	}
 }
 
-func writeResource(destinationPath, identity string, ordinal int, entry dbpf.Entry, payload io.Reader, names map[uint32]string) error {
-	return writeResourceWithPropertyDeclaration(destinationPath, identity, ordinal, entry, payload, names, "PROPERTYLIST")
+func writeResource(ctx context.Context, destinationPath, identity string, ordinal int, entry dbpf.Entry, payload io.Reader, names map[uint32]string) error {
+	return writeResourceWithPropertyDeclaration(ctx, destinationPath, identity, ordinal, entry, payload, names, "PROPERTYLIST")
 }
 
-func writeResourceWithPropertyDeclaration(destinationPath, identity string, ordinal int, entry dbpf.Entry, payload io.Reader, names map[uint32]string, propertyDeclaration string) error {
+func writeResourceWithPropertyDeclaration(ctx context.Context, destinationPath, identity string, ordinal int, entry dbpf.Entry, payload io.Reader, names map[uint32]string, propertyDeclaration string) error {
+	if entry.Type == luaResourceType {
+		contents, err := io.ReadAll(payload)
+		if err != nil {
+			return fmt.Errorf("luaRead: %w", err)
+		}
+		err = writeLuaResource(ctx, destinationPath, identity, contents)
+		if err != nil {
+			return fmt.Errorf("luaWrite: %w", err)
+		}
+		return nil
+	}
 	if scaleform.IsResourceType(entry.Type) {
 		contents, err := io.ReadAll(payload)
 		if err != nil {

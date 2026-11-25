@@ -2,6 +2,7 @@ package sim
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 )
@@ -125,23 +126,56 @@ func (r *SimulatorRandom) Snapshot() RandomSnapshot {
 	}
 }
 
-func SelectRankDamage(random *SimulatorRandom, damageRange DamageRange) (float32, error) {
+// ValidateRankDamageRange validates the existing discrete selection policy.
+// Fixed amounts retain their exact fractional value. Variable fractional bounds
+// are quantized outward only when sampled; the lost server's roll distribution
+// is unverified, so this preserves the existing compatibility policy.
+func ValidateRankDamageRange(damageRange DamageRange) error {
 	minimum := float64(damageRange.Minimum)
 	maximum := float64(damageRange.Maximum)
-	if random == nil || math.IsNaN(minimum) || math.IsNaN(maximum) ||
-		math.IsInf(minimum, 0) || math.IsInf(maximum, 0) || minimum > maximum ||
-		math.Trunc(minimum) != minimum || math.Trunc(maximum) != maximum {
-		return 0, errors.New("invalid damage range")
+	if math.IsNaN(minimum) || math.IsNaN(maximum) ||
+		math.IsInf(minimum, 0) || math.IsInf(maximum, 0) || minimum > maximum {
+		return errors.New("invalid damage range")
 	}
-	minimumInteger := int64(minimum)
-	maximumInteger := int64(maximum)
-	span := maximumInteger - minimumInteger + 1
+	if minimum < float64(math.MinInt64) || maximum >= float64(math.MaxInt64) {
+		return errors.New("damage range overflow")
+	}
+	if minimum == maximum {
+		return nil
+	}
+	span := math.Ceil(maximum) - math.Floor(minimum) + 1
 	if span < 1 || span > math.MaxUint32 {
-		return 0, errors.New("damage range overflow")
+		return errors.New("damage range overflow")
 	}
+	return nil
+}
+
+func SelectRankDamage(random *SimulatorRandom, damageRange DamageRange) (float32, error) {
+	if random == nil {
+		return 0, errors.New("nil simulator random")
+	}
+	err := ValidateRankDamageRange(damageRange)
+	if err != nil {
+		return 0, fmt.Errorf("damageRange: %w", err)
+	}
+	if damageRange.Minimum == damageRange.Maximum {
+		// Existing fixed integer rolls also consumed one draw. Preserve that
+		// stream position without inventing variance in a fixed fractional hit.
+		offset, err := random.Index(1)
+		if err != nil {
+			return 0, fmt.Errorf("fixedIndex: %w", err)
+		}
+		if offset != 0 {
+			return 0, errors.New("fixed damage index invalid")
+		}
+		return damageRange.Minimum, nil
+	}
+	minimumInteger := int64(math.Floor(float64(damageRange.Minimum)))
+	maximumInteger := int64(math.Ceil(float64(damageRange.Maximum)))
+	span := maximumInteger - minimumInteger + 1
 	offset, err := random.Index(uint32(span))
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("damageIndex: %w", err)
 	}
 	return float32(minimumInteger + int64(offset)), nil
 }

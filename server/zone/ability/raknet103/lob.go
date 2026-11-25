@@ -45,6 +45,9 @@ func TossLaunchForTeam(
 			LinearVelocity: lobInitialVelocity(plan.Lob),
 			Scale:          1,
 			Team:           team,
+			// Build 103 A2EF00 selects the lob mover before A30D60 consumes
+			// the trajectory. A fresh toss needs the same type as a cloud lob.
+			MovementType: 4,
 		},
 	}
 	if plan.Definition.Toss.ProjectileEffectName != "" {

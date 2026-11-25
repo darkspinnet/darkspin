@@ -13,8 +13,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lua-wasm:
+    name: Prepare Lua build inputs
+    uses: ./.github/workflows/lua-wasm.yml
+
   build:
     name: Build ${{ matrix.name }}
+    needs: lua-wasm
     env:
       DARKSPINNER_GOARCH: ${{ matrix.arch }}
       DARKSPINNER_UPDATE_URL: https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-update-${{ matrix.name }}.json
@@ -50,7 +55,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: Set up Node.js
@@ -98,6 +103,12 @@ jobs:
           go install github.com/magefile/mage@v1.15.0
           go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
 
+      - name: Download portable Lua build inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: internal-lua-wasm
+          path: bin/cache/lua-wasm
+
       - name: Build native release archive
         run: mage darkspinner:buildcinative
 
@@ -127,6 +138,7 @@ jobs:
 
   darkrun:
     name: Build Darkrun ${{ matrix.platform }}-amd64
+    needs: lua-wasm
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -140,11 +152,17 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: Install Mage
         run: go install github.com/magefile/mage@v1.15.0
+
+      - name: Download portable Lua build inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: internal-lua-wasm
+          path: bin/cache/lua-wasm
 
       - name: Build Darkrun archive
         run: mage darkrun:buildci ${{ matrix.platform }}

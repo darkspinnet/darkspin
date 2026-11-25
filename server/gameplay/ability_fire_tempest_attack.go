@@ -16,7 +16,32 @@ import (
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
-const fireTempestPetPrimaryStatOffset = float32(1)
+// Build 103's RangedElementalPet mirrors the owner's primary-stat selector
+// and Strength/Dexterity/Mind with authored multipliers of one. The summon's
+// PetDamage tooltip stat does not replace Fireball's inherited Damage stat.
+func fireTempestPetDamageProfile(creature game.GameplayCreature) game.DamageProfile {
+	return game.DamageProfile{
+		PrimaryAttribute:                creature.DamageProfile.PrimaryAttribute,
+		IsPrimaryAttributeFound:         creature.DamageProfile.IsPrimaryAttributeFound,
+		PrimaryAttributeBaseline:        creature.DamageProfile.PrimaryAttributeBaseline,
+		IsPrimaryAttributeBaselineFound: creature.DamageProfile.IsPrimaryAttributeBaselineFound,
+	}
+}
+
+func fireTempestPetDamageRange(ability sim.AbilityDefinition, creature game.GameplayCreature) (game.DamageRange, error) {
+	// Projectile-template CalculateDamage multiplies pet base endpoints by
+	// 1 + the owner's PetDamage before TakeDamage applies primary scaling.
+	petMultiplier := max(float32(0), 1+creature.PetDamage)
+	damageRange, err := game.ResolveAbilityDamageRange(game.AbilityDamage{
+		Minimum:     ability.MinimumDamage * petMultiplier,
+		Maximum:     ability.MaximumDamage * petMultiplier,
+		Coefficient: ability.DamageCoefficient,
+	}, fireTempestPetDamageProfile(creature))
+	if err != nil {
+		return game.DamageRange{}, fmt.Errorf("guardianDamage: %w", err)
+	}
+	return damageRange, nil
+}
 
 type fireTempestPetAttackStep struct {
 	runtime            campaignDamageRuntime
@@ -114,16 +139,7 @@ func (r campaignDamageRuntime) startFireTempestPetAttack(
 		return nil, fmt.Errorf("fireTempestPetProjectileID: %w", objectIDErr)
 	}
 	creature := peerSession.binding.Creatures[peerSession.deployedCreatureIndex]
-	damageRange, damageErr := game.ResolveAbilityDamageRange(
-		game.AbilityDamage{
-			Minimum: ability.MinimumDamage, Maximum: ability.MaximumDamage,
-			Coefficient: ability.DamageCoefficient,
-		},
-		game.DamageProfile{
-			PrimaryAttribute:        creature.PetDamage + fireTempestPetPrimaryStatOffset,
-			IsPrimaryAttributeFound: true,
-		},
-	)
+	damageRange, damageErr := fireTempestPetDamageRange(ability, creature)
 	if damageErr != nil {
 		peerSession.zone.Companion().ReleaseAttack(plan.ObjectID, plan.TargetObjectID)
 		r.registry.mutex.Unlock()

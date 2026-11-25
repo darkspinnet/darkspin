@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/navigation"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
-const InterWaveDelay = 1500 * time.Millisecond
-const gateContactRadius = float32(2)
+const InterWaveDelay = 500 * time.Millisecond
 
 type Phase uint8
 
@@ -44,6 +44,7 @@ type Snapshot struct {
 	MarkerSetName string
 	Phase         Phase
 	WaveOrdinal   int
+	WaveCount     int
 	LiveObjectIDs []uint32
 	IsGateActive  bool
 	Completion    Completion
@@ -60,6 +61,7 @@ type encounter struct {
 	publication     game.CampaignDirectorPublication
 	phase           Phase
 	waveOrdinal     int
+	waveCount       int
 	liveObjectIDs   map[uint32]bool
 	isGateActive    bool
 	completion      Completion
@@ -67,11 +69,15 @@ type encounter struct {
 }
 
 type Session struct {
-	mu                       sync.RWMutex
-	areMutationAgentsEnabled bool
-	policy                   Policy
-	encountersByMarkerSet    map[string]*encounter
-	wavesByMarkerSet         map[string]*WaveSequence
+	mu                          sync.RWMutex
+	areMutationAgentsEnabled    bool
+	policy                      Policy
+	waveSeed                    uint64
+	encountersByMarkerSet       map[string]*encounter
+	wavesByMarkerSet            map[string]*WaveSequence
+	navigationMesh              *navigation.Mesh
+	barrierMarkerIDsByMarkerSet map[string][]uint32
+	linkMarkerIDsByMarkerSet    map[string][]uint32
 }
 
 // IsActive includes the delay between waves, while a horde still owns its
@@ -98,8 +104,15 @@ func NewCampaignSession(chainProgression uint32) *Session {
 // Once unlocked, earlier missions retain Mutation Agents and later waves.
 // The explicit operator disable still applies to every run.
 func NewCampaignSessionWithPolicy(chainProgression uint32, policy Policy) *Session {
+	return NewCampaignSessionWithSeed(chainProgression, policy, 0)
+}
+
+func NewCampaignSessionWithSeed(chainProgression uint32, policy Policy, seed uint64) *Session {
 	e := NewSession()
 	e.policy = policy
+	e.policy.AdditionalWaveChancePercents = append([]uint32(nil), policy.AdditionalWaveChancePercents...)
+	e.policy.FixedWaves = game.CloneZoneHordeWaves(policy.FixedWaves)
+	e.waveSeed = seed
 	e.areMutationAgentsEnabled = policy.IsMutationAgentEnabled &&
 		chainProgression >= policy.MutationAgentMinChainLevel
 	return e
@@ -224,8 +237,10 @@ func (s *Session) AdmitFirstWave(
 	s.encountersByMarkerSet[key] = &encounter{
 		publication: clonePublication(publication), phase: PhaseActiveWave,
 		waveOrdinal: 1, liveObjectIDs: liveObjectIDs, isGateActive: true,
+		waveCount:       s.encounterPolicy(publication).WaveCount,
 		mutationAgentID: mutationAgentID,
 	}
+	s.setNavigationEnabled(key, true)
 	return nil
 }
 
@@ -292,7 +307,7 @@ func (s *Session) Defeat(
 		return Transition{}, nil
 	}
 	transition := Transition{MarkerSetName: encounter.publication.MarkerSetName}
-	if s.areMutationAgentsEnabled && !isMutationAgentCompletion && encounter.waveOrdinal < s.policy.WaveCount {
+	if s.areMutationAgentsEnabled && !isMutationAgentCompletion && encounter.waveOrdinal < encounter.waveCount {
 		encounter.phase = PhaseInterWave
 		count, isFound := ListenerCount(encounter.publication)
 		if !isFound {
@@ -314,6 +329,7 @@ func (s *Session) Defeat(
 	encounter.phase = PhaseComplete
 	clear(encounter.liveObjectIDs)
 	encounter.isGateActive = false
+	s.setNavigationEnabled(key, false)
 	encounter.completion = Completion{
 		MarkerSetName: encounter.publication.MarkerSetName,
 		EventName:     "horde complete", TriggerMarkerID: encounter.publication.TriggerMarkerID,
@@ -388,7 +404,7 @@ func (s *Session) canAdmitNextWave(
 		return errors.New("horde next wave: invalid admission")
 	}
 	encounter := s.encountersByMarkerSet[strings.ToLower(markerSetName)]
-	if encounter == nil || encounter.phase != PhaseInterWave || encounter.waveOrdinal >= max(2, s.policy.WaveCount) {
+	if encounter == nil || encounter.phase != PhaseInterWave || encounter.waveOrdinal >= max(2, encounter.waveCount) {
 		return errors.New("horde next wave: invalid state")
 	}
 	seenObjectIDs := make(map[uint32]bool, len(plans))
@@ -433,6 +449,7 @@ func (s *Session) Snapshot(markerSetName string) (Snapshot, bool) {
 	return Snapshot{
 		MarkerSetName: encounter.publication.MarkerSetName,
 		Phase:         encounter.phase, WaveOrdinal: encounter.waveOrdinal,
+		WaveCount:     encounter.waveCount,
 		LiveObjectIDs: liveObjectIDs, IsGateActive: encounter.isGateActive,
 		Completion: encounter.completion,
 	}, true
@@ -454,6 +471,7 @@ func (s *Session) Snapshots() []Snapshot {
 		snapshots = append(snapshots, Snapshot{
 			MarkerSetName: encounter.publication.MarkerSetName,
 			Phase:         encounter.phase, WaveOrdinal: encounter.waveOrdinal,
+			WaveCount:     encounter.waveCount,
 			LiveObjectIDs: liveObjectIDs, IsGateActive: encounter.isGateActive,
 			Completion: encounter.completion,
 		})
@@ -487,6 +505,7 @@ func (s *Session) RestoreCompleted(snapshots []Snapshot) error {
 				TriggerMarkerID: snapshot.Completion.TriggerMarkerID,
 			},
 			phase: snapshot.Phase, waveOrdinal: snapshot.WaveOrdinal,
+			waveCount:     max(snapshot.WaveCount, snapshot.WaveOrdinal),
 			liveObjectIDs: make(map[uint32]bool),
 			isGateActive:  false, completion: snapshot.Completion,
 		}
@@ -505,6 +524,9 @@ func ValidateCompletedSnapshots(snapshots []Snapshot) error {
 			snapshot.Completion.TriggerMarkerID != 0
 		if key == "" || !isCompletionValid {
 			return fmt.Errorf("horde snapshot[%d]: invalid", index)
+		}
+		if snapshot.WaveCount != 0 && (snapshot.WaveCount < snapshot.WaveOrdinal || snapshot.WaveCount > 10) {
+			return fmt.Errorf("horde snapshot[%d]: invalid wave count", index)
 		}
 		if _, isDuplicate := markerSets[key]; isDuplicate {
 			return fmt.Errorf("horde snapshot[%d]: duplicate", index)
@@ -556,32 +578,14 @@ func (s *Session) ConstrainMovement(
 	if !isFinitePosition(previous) || !isFinitePosition(current) {
 		return current, GateContact{}, errors.New("horde gate: invalid position")
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, markerSet := range director.MarkerSets {
-		encounter := s.encountersByMarkerSet[strings.ToLower(markerSet.Name)]
-		if encounter == nil || !encounter.isGateActive {
+	for _, link := range s.GateLinks(director) {
+		if !link.Route.CrossesTrigger(previous, current) {
 			continue
 		}
-		isGateFound := false
-		for _, marker := range markerSet.Markers {
-			if !strings.EqualFold(marker.NounName, "HordeGateTeleporter.Noun") ||
-				!gateHasContact(marker) {
-				continue
-			}
-			isGateFound = true
-			radiusSquared := gateContactRadius * gateContactRadius
-			if segmentDistanceSquared(previous, current, marker.Position) > radiusSquared {
-				continue
-			}
-			return previous, GateContact{
-				MarkerSetName: markerSet.Name, MarkerID: marker.MarkerID,
-				Position: marker.Position, ReturnPosition: previous,
-			}, nil
-		}
-		if !isGateFound {
-			continue
-		}
+		return link.Route.Destination, GateContact{
+			MarkerSetName: link.MarkerSetName, MarkerID: link.Route.MarkerID,
+			Position: link.Route.Source, ReturnPosition: link.Route.Destination,
+		}, nil
 	}
 	return current, GateContact{}, nil
 }
@@ -595,33 +599,6 @@ func clonePublication(
 		publication.Listeners...,
 	)
 	return cloned
-}
-
-func gateHasContact(marker game.CampaignDirectorMarker) bool {
-	for _, event := range marker.Events {
-		if event.CallbackName == "HordeGateTeleporter_OnEnter" {
-			return true
-		}
-	}
-	return false
-}
-
-func segmentDistanceSquared(start game.Vec3, end game.Vec3, point game.Vec3) float32 {
-	delta := game.Vec3{X: end.X - start.X, Y: end.Y - start.Y, Z: end.Z - start.Z}
-	lengthSquared := delta.X*delta.X + delta.Y*delta.Y + delta.Z*delta.Z
-	if lengthSquared == 0 {
-		x := start.X - point.X
-		y := start.Y - point.Y
-		z := start.Z - point.Z
-		return x*x + y*y + z*z
-	}
-	projection := ((point.X-start.X)*delta.X + (point.Y-start.Y)*delta.Y +
-		(point.Z-start.Z)*delta.Z) / lengthSquared
-	projection = min(float32(1), max(float32(0), projection))
-	x := start.X + projection*delta.X - point.X
-	y := start.Y + projection*delta.Y - point.Y
-	z := start.Z + projection*delta.Z - point.Z
-	return x*x + y*y + z*z
 }
 
 func isFinitePosition(position game.Vec3) bool {

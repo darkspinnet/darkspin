@@ -69,8 +69,21 @@ func AffixResurrectionFraction(npc Snapshot) float32 {
 }
 
 func canReceiveResurrection(plan SpawnPlan) bool {
-	return !plan.IsFixture &&
+	return !plan.IsFixture && !IsResurrectionBlocked(plan) &&
 		(!plan.NPCProfile.IsClassKnown || plan.NPCProfile.NPCType != eliteMinionNPCType)
+}
+
+// Sau and Astri stay defeated while their remaining encounter adds are alive.
+func IsResurrectionBlocked(plan SpawnPlan) bool {
+	if !plan.IsBoss {
+		return false
+	}
+	switch nounSpecies(plan.NounName) {
+	case "cryosspecialone", "cryosspecialtwo":
+		return true
+	default:
+		return false
+	}
 }
 
 // affixResurrectionFraction validates the aura child at the instant of the

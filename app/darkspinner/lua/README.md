@@ -2,17 +2,33 @@
 
 Each `local/` file is a runnable scenario. Files under `definitions/` describe the Lua API.
 
+A scenario-capable launcher started with `--lua local/<name>.lua` skips normal server startup and runs that script immediately. The Lua VM, supervisor, and isolated scenario server share the launcher process. The browser launcher remains on the configured port while the scenario server is running.
+
+After a script finishes or is stopped, its server and clients stay available for diagnostics until the session is ended. Every press of Run closes the previous session and starts a fresh isolated server with fresh profile storage, including when rerunning the same script. Kill All ends the retained session while keeping the launcher available.
+
 ## Utility
 
+- `local/commands.lua` — Native slash-command regression for diagnostics, account mutations, normalization, resources, teleport, spawning, God mode, effects and equipment drops.
+- `local/commands_events.lua` — Numeric/named event aliases and numeric warp normalization with independent mission effects.
+- `local/commands_terminal.lua` — Separate owned missions for kill, reset, recap, victory, defeat and process exit, including ordinary-role denial checks.
+- `local/commands_social.lua` — Native party changes, co-op follow and AI damage, with an intentionally failing coverage verdict for native commands whose effects cannot yet be observed.
+- [Command coverage](COMMANDS.md) — Exact inventory, prerequisites, assertions, remaining gaps and execution instructions. These scripts require the scenario observation APIs added alongside them; they have not been run.
 - `inspect.lua` — Reads supervisor state without launching a game client.
+- `local/profile_campaign.lua` — CPU, memory and contention profiles for startup, AI-world idle, a second solo client, controlled NPC combat alongside the AI world, and native next-mission continuation.
+- `local/companion_looks.lua` — Native campaign matchmaking with an AI companion and a player/companion appearance capture; rerun for a fresh match-local seed.
 
 ## API definitions
+
+Use `scenario.Must(scenario.ProfileStart("phase-name"))` and `scenario.Must(scenario.ProfileStop())` outside Parallel to measure a specific phase. A profile still active at script exit is finalized automatically, including after failure or cancellation. Profiles are process-wide because the launcher, Lua VM and server share a process; server CPU goroutines carry the `darkspin.component=server` label, while garbage collection and diagnostic work can remain unlabeled.
+
+Each phase writes CPU, heap, mutex, block and goroutine `.pprof` files plus `summary.json` under its run's `profiles` directory. Heap and contention baselines are written before sampling begins. Use `go tool pprof -alloc_space -base <heap-before.pprof> <heap.pprof>` for allocation growth and `-tagfocus=darkspin.component=server` for server-labeled CPU samples. Sleeping goroutines dominate normal block-profile totals; aggregate blocked time is not elapsed latency. Preserve evidence outside the run directories before ending and cleaning up a session.
 
 - `definitions/ability.lua` — Ability input, cast results, and observations.
 - `definitions/cinematic.lua` — Cinematic control and state.
 - `definitions/client.lua` — Client handle and core operations.
 - `definitions/debug.lua` — Debugger pause, resume, and state.
 - `definitions/diagnostic.lua` — Captures and diagnostic artifacts.
+- `definitions/chat.lua` — Fresh owned command replies, native trace markers and diagnostic artifact metadata; no server-side command-dispatch shortcut.
 - `definitions/error.lua` — Scenario error results.
 - `definitions/hero.lua` — Hero and squad observations.
 - `definitions/mission.lua` — Mission selection, entry, and completion.
@@ -39,6 +55,7 @@ Each `local/` file is a runnable scenario. Files under `definitions/` describe t
 - `local/camera_held.lua` — Camera behavior during held movement and a hero switch.
 - `local/cinematic_toggle.lua` — Opening movie and in-game cinematic settings.
 - `local/controlled_npc.lua` — AI-disabled NPC movement and combat commands.
+- `local/mutation_agent.lua` — One Mutation Agent with numbered screenshots for idle, wandering, firing, the mutation beam, ally growth, and defeat.
 - `local/coop_combat.lua` — Two-client native co-op combat in mission 1-1.
 - `local/coop_gear.lua` — Co-op appearance, equipment stats, and squad switches.
 - `local/coop_replace.lua` — Repeated co-op hero replacement with both clients observing.
@@ -100,6 +117,8 @@ Each `local/` file is a runnable scenario. Files under `definitions/` describe t
 - `local/solo_mission.lua` — Ordinary solo mission 1-1 combat.
 - `local/solo_replace.lua` — Repeated solo campaign hero replacement.
 - `local/two_arsenal_parallel.lua` — Parallel launch of two Arsenal clients.
+- `local/companion_roles.lua` — Native co-op matchmaking and opening/idle companion role selection while the player swaps between Sentinel, support and Blitz.
+- `local/noreplay.lua` — Completed-stage replay, ship-time `/noreplay on|off` and bare toggle, native Continue into the authored map, and bug-report provenance.
 - `local/two_arsenal.lua` — Two-client Arsenal authentication and presence.
 - `local/two_clients.lua` — Seeded dual-client scenes, party, and mission.
 - `local/two_mission.lua` — Two clients entering a shared mission.

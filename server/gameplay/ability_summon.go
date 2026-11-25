@@ -26,6 +26,7 @@ const spriteHealingFraction = float32(0.03)
 const spriteHealingInterval = 3 * time.Second
 const spriteHealingHitDelay = 333333343 * time.Nanosecond
 const spriteMovementSpeed = float32(12)
+const spriteFollowInterval = 200 * time.Millisecond
 
 type heroSummonRun struct {
 	runtime       campaignAbilityCommandRuntime
@@ -351,10 +352,10 @@ func (r campaignAbilityCommandRuntime) handleHeroSummon(
 		UserID: peerSession.binding.UserID, PeerGeneration: peerSession.generation,
 		ObjectID: objectID, OwnerObjectID: req.command.Common.ObjectID,
 		Noun:     util.HashID(definition.SpawnNoun),
-		Position: position, FootprintRadius: footprintRadius,
+		Position: position, Facing: game.Vec3(facing), FootprintRadius: footprintRadius,
 		HitPoint: hitPoint, MaximumHitPoint: hitPoint,
 		MovementSpeed: spriteMovementSpeed, FollowDistance: spriteFollowDistance,
-		IsTargetable: true, IsCombatant: false,
+		IsTargetable: true, IsCombatant: false, IsFollowManaged: true,
 	})
 	if err != nil {
 		_ = peerSession.setDeployedManaPoints(previousManaPoint)
@@ -384,6 +385,9 @@ func (r campaignAbilityCommandRuntime) handleHeroSummon(
 	producers = append(producers, raknet.ScheduledPacketProducer{
 		Delay: definition.ReleaseDelay, Produce: run.release(releasePacket),
 	})
+	for delay := definition.ReleaseDelay + spriteFollowInterval; delay < definition.Duration; delay += spriteFollowInterval {
+		producers = append(producers, raknet.ScheduledPacketProducer{Delay: delay, Produce: run.resumeFollow})
+	}
 	for delay := definition.ReleaseDelay; delay < definition.Duration; delay += spriteHealingInterval {
 		producers = append(producers, raknet.ScheduledPacketProducer{
 			Delay: delay, Produce: run.sting,
@@ -391,11 +395,6 @@ func (r campaignAbilityCommandRuntime) handleHeroSummon(
 		if delay+spriteHealingHitDelay < definition.Duration {
 			producers = append(producers, raknet.ScheduledPacketProducer{
 				Delay: delay + spriteHealingHitDelay, Produce: run.tick,
-			})
-		}
-		if delay+time.Second < definition.Duration {
-			producers = append(producers, raknet.ScheduledPacketProducer{
-				Delay: delay + time.Second, Produce: run.resumeFollow,
 			})
 		}
 	}

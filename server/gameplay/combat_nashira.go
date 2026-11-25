@@ -43,12 +43,24 @@ func (e campaignNashiraSplitStep) produce() ([][]byte, error) {
 	isCurrent := isFound && s.isCampaignNPCSourceActive(
 		e.generation, e.plan.nashira.Plan.ObjectID,
 	)
+	// Hero death cancels pending split ownership while keeping the boss alive.
+	// An old producer must not publish after a later hero reacquires the boss.
+	isCurrent = isCurrent && len(e.plan.plans) == 1 &&
+		s.campaignNashiraSplitPendingObjectIDs[e.plan.nashira.Plan.ObjectID] == e.plan.plans[0].ObjectID
 	if !isCurrent {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
 	nashira, isNashiraFound := s.zone.NPCs().NPC(e.plan.nashira.Plan.ObjectID)
 	if !isNashiraFound || nashira.IsDefeated {
+		e.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	// Different attacking peers can reserve the same split before either
+	// delayed producer admits it. Only one may consume that split ordinal.
+	if len(s.zone.NPCs().NashiraDuplicateObjectIDs(nashira.Plan.ObjectID)) != len(e.plan.objectIDs)-1 {
+		s.rollbackCampaignNashiraSplit(e.plan)
+		e.runtime.registry.sessions[e.sessionKey] = s
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -274,7 +286,7 @@ func (s *gameplayPeerSession) planCampaignNashiraSplit(
 		return nil, nil, nil
 	}
 	maximumHitPoint := nashira.Plan.NPCProfile.HitPoint
-	objectIDs := s.campaignNashiraSplitObjectIDs[result.ObjectID]
+	objectIDs := s.zone.NPCs().NashiraDuplicateObjectIDs(result.ObjectID)
 	cloneCount := len(objectIDs)
 	if cloneCount >= campaignNashiraMaximumCloneCount ||
 		s.campaignNashiraSplitPendingObjectIDs[result.ObjectID] != 0 {

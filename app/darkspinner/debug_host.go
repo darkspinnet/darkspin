@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"strconv"
 	"sync"
 	"time"
@@ -25,13 +26,15 @@ import (
 )
 
 type debugHostRequest struct {
-	RunID         string
-	Paths         scenario.RunPaths
-	GameDirectory string
-	ContentPath   string
-	FangPath      string
-	Port          uint16
-	IsModded      bool
+	RunID           string
+	Paths           scenario.RunPaths
+	GameDirectory   string
+	ContentPath     string
+	FangPath        string
+	Port            uint16
+	IsModded        bool
+	LauncherHandler http.Handler
+	BeforeStart     func() error
 }
 
 type debugProfileCredential struct {
@@ -58,6 +61,8 @@ type debugHost struct {
 	runErr            error
 	logOutput         *os.File
 	serverLogPath     string
+	runtimePath       string
+	reportDirectory   string
 	serverTracePath   string
 }
 
@@ -65,6 +70,10 @@ func newDebugHost(ctx context.Context, req debugHostRequest) (*debugHost, error)
 	if ctx == nil {
 		return nil, errors.New("debug host requires a session lifetime context")
 	}
+	parentContext := ctx
+	ctx = pprof.WithLabels(ctx, pprof.Labels("darkspin.component", "server"))
+	pprof.SetGoroutineLabels(ctx)
+	defer pprof.SetGoroutineLabels(parentContext)
 	err := ctx.Err()
 	if err != nil {
 		return nil, fmt.Errorf("hostContext: %w", err)
@@ -138,8 +147,8 @@ func newDebugHost(ctx context.Context, req debugHostRequest) (*debugHost, error)
 	}
 	config := game.DefaultConfig()
 	settings := map[game.ConfigKey]string{
-		game.ConfigServerPort:           strconv.Itoa(int(req.Port)),
-		game.ConfigIsMultiplayerEnabled: "false", game.ConfigStorageDriver: "sqlite",
+		game.ConfigServerPort:    strconv.Itoa(int(req.Port)),
+		game.ConfigStorageDriver: "sqlite",
 		game.ConfigAuthJWTSecret: secret, game.ConfigAuthJWTIssuer: "darkspin-scenario",
 		game.ConfigAuthJWTAudience: "darkspin", game.ConfigSnapshotMode: "off",
 		game.ConfigIsChatStdoutEnabled: "false",
@@ -151,7 +160,7 @@ func newDebugHost(ctx context.Context, req debugHostRequest) (*debugHost, error)
 		}
 	}
 	configPath := filepath.Join(runtimePath, "darkspin.toml")
-	err = config.Save(configPath)
+	err = serverruntime.SaveLocalConfigurationAt(configPath, filepath.Join(runtimePath, serverruntime.SaveDirectory, serverruntime.UserDatabaseFilename), config)
 	if err != nil {
 		return nil, fmt.Errorf("hostSave: %w", err)
 	}
@@ -164,15 +173,21 @@ func newDebugHost(ctx context.Context, req debugHostRequest) (*debugHost, error)
 		return nil, fmt.Errorf("hostLog: %w", err)
 	}
 	host := &debugHost{runID: req.RunID, secret: secret, GameDirectory: req.GameDirectory,
+		runtimePath: runtimePath, reportDirectory: req.Paths.ReportDirectory,
 		serverLogPath: filepath.Join(req.Paths.ReportDirectory, "server.log"), serverTracePath: filepath.Join(req.Paths.TraceDirectory, "server.jsonl"),
 		FangPath: req.FangPath, ContentPath: working.Path, IsModded: req.IsModded, Address: net.JoinHostPort("127.0.0.1", strconv.Itoa(int(req.Port))),
 		credentialsByName: make(map[string]debugProfileCredential), done: make(chan struct{}), logOutput: logOutput}
+	routes := []serverruntime.HTTPRoute{{Pattern: "/scenario/ready", Methods: []string{http.MethodGet}, Handler: scenarioReadyHandler{marker: marker}}}
+	if req.LauncherHandler != nil {
+		routes = append(routes, serverruntime.HTTPRoute{Pattern: "/launcher(?:/.*)?",
+			Methods: []string{http.MethodGet, http.MethodPost}, Handler: req.LauncherHandler})
+	}
 	host.server, err = serverruntime.New(serverruntime.Options{
 		GamePath: req.GameDirectory, ConfigPath: configPath, RuntimePath: runtimePath,
 		IsModded:   req.IsModded,
 		Logger:     log.New(logOutput, "", log.LstdFlags|log.LUTC),
 		TracePath:  filepath.Join(req.Paths.TraceDirectory, "server.jsonl"),
-		HTTPRoutes: []serverruntime.HTTPRoute{{Pattern: "/scenario/ready", Methods: []string{http.MethodGet}, Handler: scenarioReadyHandler{marker: marker}}},
+		HTTPRoutes: routes,
 	})
 	if err != nil {
 		closeErr := logOutput.Close()
@@ -184,6 +199,14 @@ func newDebugHost(ctx context.Context, req debugHostRequest) (*debugHost, error)
 		host.server.Close()
 		closeErr := logOutput.Close()
 		return nil, fmt.Errorf("hostCapture: %w", errors.Join(err, closeErr))
+	}
+	if req.BeforeStart != nil {
+		err = req.BeforeStart()
+		if err != nil {
+			host.server.Close()
+			closeErr := logOutput.Close()
+			return nil, fmt.Errorf("hostHandoff: %w", errors.Join(err, closeErr))
+		}
 	}
 	runContext, cancel := context.WithCancel(ctx)
 	host.cancel = cancel
@@ -311,7 +334,11 @@ func (e *debugHost) createProfile(ctx context.Context, req sporenet.DebugProfile
 	if err != nil {
 		return sporenet.DebugProfile{}, fmt.Errorf("profileCreate: %w", err)
 	}
-	jwt, err := issueScenarioJWT(e.secret, profile.LoginName, profile.UserID)
+	revision, err := e.server.DebugCredentialRevision(ctx, profile.UserID, profile.LoginName)
+	if err != nil {
+		return sporenet.DebugProfile{}, fmt.Errorf("profileRevision: %w", err)
+	}
+	jwt, err := issueScenarioJWT(e.secret, profile.LoginName, profile.UserID, revision)
 	if err != nil {
 		return sporenet.DebugProfile{}, fmt.Errorf("profileToken: %w", err)
 	}
@@ -331,8 +358,28 @@ func (e *debugHost) ProfileCredential(name string) (debugProfileCredential, erro
 		return debugProfileCredential{}, errors.New("owned debug server has stopped")
 	default:
 	}
-	// Inspection outlives a launch token; issue fresh credentials at launch time.
-	jwt, err := issueScenarioJWT(e.secret, credential.LoginName, credential.UserID)
+	return credential, nil
+}
+
+// RefreshProfileCredential is the launch-only I/O path. Identity observations
+// use ProfileCredential without issuing or caching another launch token.
+func (e *debugHost) RefreshProfileCredential(ctx context.Context, name string) (debugProfileCredential, error) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	credential, isCreated := e.credentialsByName[name]
+	if !isCreated {
+		return debugProfileCredential{}, errors.New("client has no fresh owned profile")
+	}
+	select {
+	case <-e.done:
+		return debugProfileCredential{}, errors.New("owned debug server has stopped")
+	default:
+	}
+	revision, err := e.server.DebugCredentialRevision(ctx, credential.UserID, credential.LoginName)
+	if err != nil {
+		return debugProfileCredential{}, fmt.Errorf("refreshRevision: %w", err)
+	}
+	jwt, err := issueScenarioJWT(e.secret, credential.LoginName, credential.UserID, revision)
 	if err != nil {
 		return debugProfileCredential{}, fmt.Errorf("profileRefresh: %w", err)
 	}

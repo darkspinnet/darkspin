@@ -106,7 +106,7 @@ func (e campaignPursuitProgressProducer) produce() ([][]byte, error) {
 	}
 	targets := e.runtime.registry.abilityTargetsLocked(e.runtime, peerSession, sim.AbilityDefinition{}, e.packet.SourceTime)
 	target, isTargetFound := targets.NPC(pursuit.TargetObjectID)
-	if !pursuit.IsGround && (!isTargetFound || target.IsDefeated || target.HitPoint <= 0) {
+	if !pursuit.IsGround && (!isTargetFound || !zoneability.IsHostileTarget(target)) {
 		cancelPacket, err := abilityraknet.Acknowledge(
 			abilityraknet.AcknowledgeRequest{
 				SyncStamp: pursuit.SyncStamp, ResponseType: raknet.ActionResponseRejected,
@@ -455,6 +455,7 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 	isSessionCurrent := isFound &&
 		peerSession.generation == commandSession.generation &&
 		command.Common.ObjectID == peerSession.deployedObjectID &&
+		peerSession.deployedHitPoint() > 0 && !peerSession.isHeroSelectionPending &&
 		peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) &&
 		((peerSession.binding.Mode == game.ModeArena && peerSession.isArenaCombatActive) ||
 			(peerSession.zone != nil && peerSession.zone.NPCs() != nil && peerSession.zone.Population() != nil))
@@ -779,7 +780,7 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		// radii are separate from this range calculation.
 		actorFootprint = peerSession.deployedCampaignActorFootprintRadius()
 		targetEnemy, isTargetFound := enemies.NPC(targetObjectID)
-		if isTargetFound {
+		if isTargetFound && zoneability.IsHostileTarget(targetEnemy) {
 			targetFootprint = targetEnemy.Plan.ActorFootprintRadius()
 			maximumRange += actorFootprint + targetFootprint
 			if peerSession.binding.Mode != game.ModeArena && !targetEnemy.Plan.IsFixture {
@@ -958,12 +959,16 @@ func (r campaignAbilityCommandRuntime) handleCharacter(
 	// Accepted Arena statuses share recipient-owned maps with expiry jobs.
 	// Sample control gates under their registry lock before dispatching.
 	r.registry.mutex.RLock()
+	isDefeated := commandSession.deployedHitPoint() <= 0 || commandSession.isHeroSelectionPending
 	isSilenced := commandSession.isEnemySilenceActive(abilityStartTime)
 	isAsleep := commandSession.isEnemySleepActive(abilityStartTime)
 	isDazed := commandSession.isScarabDazed()
 	isStunned := commandSession.isEnemyStunActive(abilityStartTime)
 	isTerrified := commandSession.isEnemyFearActive(abilityStartTime)
 	r.registry.mutex.RUnlock()
+	if isDefeated {
+		return request.reject("hero defeated or selection pending")
+	}
 	if command.Ability.Index != 0 && isSilenced {
 		return request.reject("silenced")
 	}
@@ -1395,6 +1400,9 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 			e.sourcePosition, e.center, e.creature, e.definition, e.admissionRange,
 		)
 	} else if e.definition.Kind == sim.AbilityKindPointBlank {
+		if e.definition.Name == "TCShieldedSentinelBasic" {
+			e.sourcePosition = game.Vec3(current.playerPosition)
+		}
 		if e.definition.BonusDamageMultiplier > 0 {
 			plan, err = zoneability.ResolvePointBlankBasicHit(
 				enemies, e.command.Common.ObjectID,
@@ -1530,17 +1538,16 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 			duration := zonenpc.CrowdControlDuration(
 				result.Snapshot.Plan, e.definition.StatusDuration,
 			)
-			expiresAt := now.Add(duration)
-			err = current.zone.NPCs().ApplyStun(result.Damage.ObjectID, expiresAt)
-			if err != nil {
+			controlPackets, isAdmitted, controlErr := e.admitTeleportControlLocked(
+				&current, result.Damage.ObjectID, now, duration)
+			if controlErr != nil {
 				e.runtime.registry.mutex.Unlock()
-				return nil, fmt.Errorf("campaignTeleportAreaStun: %w", err)
+				return nil, fmt.Errorf("campaignTeleportControl: %w", controlErr)
 			}
-			err = current.zone.NPCs().ApplySilence(result.Damage.ObjectID, expiresAt)
-			if err != nil {
-				e.runtime.registry.mutex.Unlock()
-				return nil, fmt.Errorf("campaignTeleportAreaSilence: %w", err)
+			if !isAdmitted {
+				continue
 			}
+			projectilePackets = append(projectilePackets, controlPackets...)
 			if e.definition.Name == "TimeRavagerSupport" {
 				e.runtime.registry.sessions[e.sessionKey] = current
 				freezePacket, freezeErr := freezeChronoObjectLocked(
@@ -1595,10 +1602,13 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("campaignAreaBasicPublish: %w", err)
 	}
-	statusPackets, err := e.runtime.applyAcceptedHitStatus(
-		e.packet, e.sessionKey, e.generation, e.command.Common.ObjectID,
-		e.hitTimestamp, plan, results,
-	)
+	var statusPackets [][]byte
+	if e.definition.Kind != sim.AbilityKindTeleportArea {
+		statusPackets, err = e.runtime.applyAcceptedHitStatus(
+			e.packet, e.sessionKey, e.generation, e.command.Common.ObjectID,
+			e.hitTimestamp, plan, results,
+		)
+	}
 	if err != nil {
 		e.runtime.logger.Printf(
 			"RakNet hero accepted-hit status omitted for %s: %v",
@@ -1810,6 +1820,7 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 			return request.reject("cursor position unavailable")
 		}
 		if definition.Kind == sim.AbilityKindTeleportArea {
+			peerSession.clearHeroControlKind(heroControlRoot)
 			peerSession.enemyRootExpiresAt = time.Time{}
 			peerSession.enemyRootTargetObjectID = 0
 			var projected game.Vec3
@@ -1939,16 +1950,22 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 	areaPlan.Definition.HitDelay = selection.HitDelay
 	areaPlan.Definition.ReleaseDelay = selection.ReleaseDelay
 	var posePackets [][]byte
-	if definition.Name == "FireTempestBasic" {
-		facing := geometryraknet.Direction(peerSession.playerPosition, center)
+	poseTarget := center
+	if !isActiveRequest && isReportedZonePosition(command.Ability.CursorPosition) &&
+		isFiniteZonePosition(command.Ability.CursorPosition) {
+		poseTarget = command.Ability.CursorPosition
+	}
+	if (definition.Name == "FireTempestBasic" || !isActiveRequest) &&
+		zoneability.Distance(game.Vec3(peerSession.playerPosition), game.Vec3(poseTarget)) > 0.001 {
+		facing := geometryraknet.Direction(peerSession.playerPosition, poseTarget)
 		posePackets, err = marshalZonePlayerAttackPose(command.Common.ObjectID,
-			peerSession.playerPosition, facing, center)
+			peerSession.playerPosition, facing, poseTarget)
 		if err != nil {
 			peerSession.basicSequenceSession().Restore(previousBasicSequence, basicSequenceRevision)
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("areaBasicFacing: %w", err)
 		}
-		peerSession.retainAttackPose(facing, center, targetObjectID,
+		peerSession.retainAttackPose(facing, poseTarget, targetObjectID,
 			abilityStartTime.Add(selection.ReleaseDelay))
 	}
 	if definition.Kind != sim.AbilityKindTeleportArea {
@@ -1959,6 +1976,16 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 		return nil, fmt.Errorf("campaignAreaBasicStop: %w", err)
 	}
 	playerMotionRevision := peerSession.playerMotionRevision()
+	if definition.Kind != sim.AbilityKindTeleportArea && previousPlayerMotion.Movement().IsMoving {
+		stopPacket, stopErr := marshalReflectedPlayerStop(command.Common.ObjectID, peerSession.playerPosition)
+		if stopErr != nil {
+			peerSession.basicSequenceSession().Restore(previousBasicSequence, basicSequenceRevision)
+			peerSession.restorePlayerMotion(previousPlayerMotion, playerMotionRevision)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("areaBasicStop: %w", stopErr)
+		}
+		posePackets = append(posePackets, stopPacket)
+	}
 	muzzleEffectName := areaPlan.Definition.MuzzleEffectName
 	if definition.Name == "TCShieldedSentinelSupport" || definition.Name == "MissileTempestSupport" || definition.Name == "SpacetimeRandom3" {
 		// Its Lua emits the object-only muzzle after waiting for the hit.
@@ -2345,6 +2372,15 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 		if advanceErr != nil {
 			return nil, fmt.Errorf("campaignBasicMissAdvance: %w", advanceErr)
 		}
+		runtime.registry.recordDiagnosticDecision(gameplayDiagnosticDecision{
+			occurredAt: runtime.now(), kind: "melee_hit", traceID: schedule.packet.TraceID,
+			remote: schedule.sessionKey, transportGeneration: current.transportGeneration,
+			zoneGeneration: schedule.generation, objectID: schedule.sourceObjectID,
+			actionType: uint32(raknet.ActionUseCharacterAbility), outcome: "miss",
+			reason: fmt.Sprintf("ability=%s hit=%d target=%d source=%v target_start=%v facing=%v start_in_range=%t: no hostile target in accepted melee arc",
+				schedule.selected.Name, e.index, schedule.targetObjectID, livePlan.SourcePosition,
+				state.initialTargetPosition, facing, state.isTargetInRangeAtStart),
+		})
 		return packets, nil
 	}
 	livePlan.TargetObjectID = liveNPC.Plan.ObjectID
@@ -3096,13 +3132,17 @@ func (e campaignTossSchedule) produceRelease() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	animationPacket, err := abilityraknet.AnimationReset(
-		e.sourceObjectID,
-		e.packet.SourceTime+uint64(e.plan.Definition.ReleaseDelay/time.Millisecond),
-	)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("campaignTossReleaseAnimation: %w", err)
+	packets := [][]byte{e.releaseResponse}
+	if peerSession.deployedObjectID != e.sourceObjectID || !peerSession.isEnemySleepActive(e.runtime.now()) {
+		animationPacket, err := abilityraknet.AnimationReset(
+			e.sourceObjectID,
+			e.packet.SourceTime+uint64(e.plan.Definition.ReleaseDelay/time.Millisecond),
+		)
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("campaignTossReleaseAnimation: %w", err)
+		}
+		packets = append(packets, animationPacket)
 	}
 	e.run.isReleased = true
 	if e.run.isLanded {
@@ -3111,7 +3151,7 @@ func (e campaignTossSchedule) produceRelease() ([][]byte, error) {
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
 	e.runtime.registry.mutex.Unlock()
-	return [][]byte{e.releaseResponse, animationPacket}, nil
+	return packets, nil
 }
 
 func (e campaignTossLandingStep) produce() ([][]byte, error) {
@@ -3681,8 +3721,7 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 	// Chunk555's UsedAbility/DealtDamage callbacks exclude basic attacks.
 	// The shared accepted-cast and damage publication owners handle the passive.
 	isFireRavagerStun := false
-	isShadowCloakCrit := peerSession.heroModifierRun != nil &&
-		peerSession.heroModifierRun.isShadowStealth
+	isShadowCloakCrit := peerSession.shadowStealthModifier() != nil
 	peerSession.basicAttack = basicRun
 	peerSession.basicAttackSyncStamp = command.Common.Unknown[0]
 	peerSession.retainAttackPose(
@@ -3790,8 +3829,9 @@ func normalizeCampaignMeleeDamage(damage game.DamageRange) game.DamageRange {
 		math.IsInf(minimum, 0) || math.IsInf(maximum, 0) {
 		return damage
 	}
-	damage.Minimum = max(float32(1), float32(math.Floor(minimum)))
-	damage.Maximum = max(damage.Minimum, float32(math.Ceil(maximum)))
+	// Retain the existing melee minimum without quantizing projected bounds.
+	damage.Minimum = max(float32(1), damage.Minimum)
+	damage.Maximum = max(damage.Minimum, damage.Maximum)
 	return damage
 }
 
@@ -4059,6 +4099,28 @@ func (r campaignAbilityCommandRuntime) handleCloudLobBasic(
 	}
 	cloudPlan, planErr := zoneability.PlanCloudLobAt(cloudReq)
 	if planErr != nil {
+		var rangeErr zoneability.TargetRangeError
+		if errors.As(planErr, &rangeErr) && definition.IsShouldPursue &&
+			targetObjectID != 0 && peerSession.zone != nil {
+			target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+			if isTargetFound && !target.IsDefeated && target.HitPoint > 0 {
+				request.startTime = abilityStartTime
+				isPursuitRetry := peerSession.campaignPlayerPursuitSession().IsRetry(
+					command.Common.ObjectID, targetObjectID,
+					command.Ability.Index, command.Common.Unknown[0],
+				)
+				packets, isPursuitStarted, pursuitErr := r.transferPlayerAbilityPursuit(
+					request, peerSession, target, heroAbilityAdmissionRange(creature, definition), isPursuitRetry,
+				)
+				if pursuitErr != nil {
+					return nil, fmt.Errorf("cloudPursuit: %w", pursuitErr)
+				}
+				if isPursuitStarted {
+					r.logger.Printf("RakNet campaign cloud lob pursuit started source=%d target=%d ability=%s", command.Common.ObjectID, targetObjectID, definition.Name)
+				}
+				return packets, nil
+			}
+		}
 		r.registry.mutex.Unlock()
 		return request.reject(planErr.Error())
 	}

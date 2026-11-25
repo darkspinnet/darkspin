@@ -25,6 +25,7 @@ type WorldState struct {
 	IsNPCTruncated          bool
 	Pickups                 []WorldPickup
 	PickupTotal             int
+	EquipmentDropCount      int
 	IsPickupTruncated       bool
 	IsPickupAvailable       bool
 	PickupUnavailableReason string
@@ -135,6 +136,7 @@ type WorldNPC struct {
 	IsHostilityAvailable bool
 	IsFixture            bool
 	IsBoss               bool
+	MutationPhase        string
 	DistanceSquared      float64
 }
 

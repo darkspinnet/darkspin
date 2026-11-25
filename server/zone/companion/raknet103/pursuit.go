@@ -15,30 +15,44 @@ func Pursuit(plan zonecompanion.Pursuit) ([][]byte, error) {
 		plan.DesiredStopDistance <= 0 || plan.TravelDuration <= 0 {
 		return nil, errors.New("companion pursuit invalid")
 	}
-	facingX := plan.TargetPosition.X - plan.Position.X
-	facingY := plan.TargetPosition.Y - plan.Position.Y
-	facingZ := plan.TargetPosition.Z - plan.Position.Z
+	goalPosition := plan.TargetPosition
+	goalFlags := uint32(0x41)
+	targetID := plan.TargetObjectID
+	stopDistance := plan.DesiredStopDistance
+	if plan.IsWaypointKnown {
+		goalPosition = plan.Waypoint
+		goalFlags = 1
+		targetID = 0
+		stopDistance = 0
+	}
+	facingX := goalPosition.X - plan.Position.X
+	facingY := goalPosition.Y - plan.Position.Y
+	facingZ := goalPosition.Z - plan.Position.Z
 	facingLength := float32(math.Sqrt(float64(
 		facingX*facingX + facingY*facingY + facingZ*facingZ,
 	)))
-	if facingLength <= 0 {
+	if facingLength <= 0 && !plan.IsWaypointKnown {
 		return nil, errors.New("companion pursuit direction invalid")
 	}
+	if facingLength <= 0 {
+		goalFlags = 0x20
+		facingLength = 1
+	}
 	goal := raknet.Vector3{
-		X: plan.TargetPosition.X, Y: plan.TargetPosition.Y,
-		Z: plan.TargetPosition.Z,
+		X: goalPosition.X, Y: goalPosition.Y,
+		Z: goalPosition.Z,
 	}
 	movePacket, err := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
-		ObjectID: plan.ObjectID, GoalFlags: 0x41,
+		ObjectID: plan.ObjectID, GoalFlags: goalFlags,
 		GoalPosition: goal,
 		Facing: raknet.Vector3{
 			X: facingX / facingLength, Y: facingY / facingLength,
 			Z: facingZ / facingLength,
 		},
-		AllowedStopDistance: plan.DesiredStopDistance,
-		DesiredStopDistance: plan.DesiredStopDistance,
+		AllowedStopDistance: stopDistance,
+		DesiredStopDistance: stopDistance,
 		TargetPosition:      goal,
-		TargetObjectID:      plan.TargetObjectID,
+		TargetObjectID:      targetID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("pursuitMarshal: %w", err)

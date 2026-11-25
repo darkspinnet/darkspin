@@ -243,7 +243,6 @@ func (e *GameplayJoin) BotBindings(
 				binding.SquadID = squadID
 				binding.Creatures = creatures
 				usedSquadIDs[squadID] = true
-				isAppearanceResolved = true
 			}
 		}
 		binding.ActivatedCreatures = nil

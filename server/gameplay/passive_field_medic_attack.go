@@ -13,6 +13,7 @@ import (
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
+	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
 
 type fieldMedicDroneAttackStep struct {
@@ -78,6 +79,11 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 		return nil, nil
 	}
 	ability := r.npc.program.SentryDroneLaser
+	if peerSession.isOverdriveActiveAt(r.npc.now()) {
+		// SentryDroneLaser ranks 3/4 author {2, 6}; ranks 1/2 use {1, 3}.
+		ability.MinimumDamage *= 2
+		ability.MaximumDamage *= 2
+	}
 	plan, isPlanFound, err := peerSession.zone.Companion().ReserveActorAttack(
 		objectID,
 		peerSession.zone.NPCs().LiveSnapshots(), ability.Range, r.npc.now(),
@@ -91,6 +97,17 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
+	// Reservation stops the server follow route. Keep the same pose through
+	// the authored cast release, not only the earlier projectile launch.
+	attackAt := r.npc.now()
+	holdDuration := max(ability.HitDelay, ability.ReleaseDelay)
+	heldDrone, holdErr := peerSession.zone.Companion().HoldFollow(objectID, attackAt, attackAt.Add(holdDuration))
+	if holdErr != nil {
+		peerSession.zone.Companion().ReleaseAttack(plan.ObjectID, plan.TargetObjectID)
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("fieldMedicDroneHold: %w", holdErr)
+	}
+	plan.Position = heldDrone.Position
 	target, isTargetFound := peerSession.zone.NPCs().NPC(plan.TargetObjectID)
 	if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 {
 		peerSession.zone.Companion().ReleaseAttack(plan.ObjectID, plan.TargetObjectID)
@@ -110,14 +127,20 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 		return nil, fmt.Errorf("fieldMedicDroneProjectileID: %w", objectIDErr)
 	}
 	creature := peerSession.binding.Creatures[peerSession.deployedCreatureIndex]
+	// Build 103 mirrors the owner's base Strength/Dexterity/Mind onto this
+	// drone (all three authored multipliers are 1). PetDamage is a separate
+	// projectile-template multiplier, not the primary attribute itself.
+	petMultiplier := max(float32(0), 1+creature.PetDamage)
 	damageRange, damageErr := game.ResolveAbilityDamageRange(
 		game.AbilityDamage{
-			Minimum: ability.MinimumDamage, Maximum: ability.MaximumDamage,
+			Minimum: ability.MinimumDamage * petMultiplier, Maximum: ability.MaximumDamage * petMultiplier,
 			Coefficient: ability.DamageCoefficient,
 		},
 		game.DamageProfile{
-			PrimaryAttribute:        creature.PetDamage,
-			IsPrimaryAttributeFound: true,
+			PrimaryAttribute:                creature.DamageProfile.PrimaryAttribute,
+			IsPrimaryAttributeFound:         creature.DamageProfile.IsPrimaryAttributeFound,
+			PrimaryAttributeBaseline:        creature.DamageProfile.PrimaryAttributeBaseline,
+			IsPrimaryAttributeBaselineFound: creature.DamageProfile.IsPrimaryAttributeBaselineFound,
 		},
 	)
 	if damageErr != nil {
@@ -134,7 +157,7 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("fieldMedicDroneDamage: %w", damageErr)
 	}
-	const droneFootprint = float32(0.5)
+	droneFootprint := heldDrone.FootprintRadius
 	targetPosition := campaignProjectileAimPosition(
 		plan.TargetPosition, target.Plan.NPCProfile.FootprintRadius, geometry,
 	)
@@ -147,6 +170,16 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 	facing := targetPosition.Sub(plan.Position)
 	if facing.Length() > 0 {
 		facing = facing.Scale(1 / facing.Length())
+	} else {
+		facing = game.Vec3{X: 1}
+	}
+	// The attack already owns the sampled follow pose. A teleport at the
+	// start of every shot makes the drone appear to jump out of its orbit.
+	posePackets, poseErr := npcraknet.MovementStop(plan.ObjectID, plan.Position)
+	if poseErr != nil {
+		peerSession.zone.Companion().ReleaseAttack(plan.ObjectID, plan.TargetObjectID)
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("fieldMedicDronePose: %w", poseErr)
 	}
 	run, packets, runErr := abilityraknet.NewProjectileRun(abilityraknet.ProjectileInput{
 		Ability: ability, ActorObjectID: plan.ObjectID,
@@ -166,6 +199,7 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("fieldMedicDroneProjectile: %w", runErr)
 	}
+	packets = append(posePackets, packets...)
 	if peerSession.fieldMedicDroneAttacks == nil {
 		peerSession.fieldMedicDroneAttacks = make(map[uint32]*abilityraknet.ProjectileRun)
 	}

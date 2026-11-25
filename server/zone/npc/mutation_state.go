@@ -20,6 +20,7 @@ const (
 	MutationEventDeactivate
 	MutationEventMovement
 	MutationEventFullHeal
+	MutationEventBeamModel
 )
 
 type MutationEventID struct {
@@ -50,6 +51,7 @@ type MutationEvent struct {
 	MovementSpeedBuff float32
 	DamageSource      MutationDamageSource
 	IsDamageClaimed   bool
+	IsBeamModelActive bool
 	// Published work is immutable; updates replace it with a fresh copy.
 	DamageWork *MutationDamageWork
 }
@@ -64,6 +66,7 @@ type MutationBeamState struct {
 	ReleaseAt        time.Time
 	IsActive         bool
 	IsChannelActive  bool
+	IsModelActive    bool
 	IsPromoted       bool
 }
 

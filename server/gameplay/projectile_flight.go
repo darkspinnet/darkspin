@@ -36,6 +36,25 @@ func (e campaignProjectileStep) produceFlight(
 		return e.produceWaveFlight(peerSession, now, isFinalScheduledStep, packets)
 	}
 	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition, schedule.packet.SourceTime)
+	if schedule.projectile.IsHoming && schedule.targetObjectID != 0 {
+		target, isTargetFound := enemies.NPC(schedule.targetObjectID)
+		if isTargetFound && target.IsPublished && !target.IsDefeated && target.HitPoint > 0 {
+			geometry, isFallback, geometryErr := abilityTargetProjectileGeometryLocked(schedule.runtime, peerSession, target)
+			if geometryErr != nil {
+				schedule.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("homingGeometry: %w", geometryErr)
+			}
+			// The conservative fallback is shared with the collision sweep.
+			if !isFallback || geometry.TargetMinimum != geometry.TargetMaximum {
+				aim := campaignProjectileAimPosition(target.Plan.Position, target.Plan.NPCProfile.FootprintRadius, geometry)
+				err = schedule.run.SteerHomingTarget(now, sim.Position(aim))
+				if err != nil {
+					schedule.runtime.registry.mutex.Unlock()
+					return nil, fmt.Errorf("homingSteer: %w", err)
+				}
+			}
+		}
+	}
 	targets := make([]sim.ProjectileCollisionTarget, 0)
 	fallbackObjectIDs := make(map[uint32]bool)
 	fallbackCount := 0
@@ -67,6 +86,7 @@ func (e campaignProjectileStep) produceFlight(
 		packets = append(packets, homingPackets...)
 	}
 	snapshot, segments := schedule.run.SampleCollisionMotion(now)
+	segments = clipProjectileObstacles(peerSession.zone.Navigation(), segments)
 	result, err := schedule.flight.AdvanceMotion(
 		e.deadline-schedule.projectile.HitDelay, segments,
 		snapshot.IsActive && snapshot.RemainingDistance <= 0, targets,
@@ -110,10 +130,14 @@ func (e campaignProjectileStep) produceFlight(
 		}
 		e.finishFlightLocked(&peerSession)
 		schedule.runtime.registry.mutex.Unlock()
+		outcome := "range-expired"
+		if result.IsBlocked {
+			outcome = "obstacle"
+		}
 		schedule.runtime.logger.Printf(
-			"RakNet projectile trajectory resolved kind=hero-basic projectile=%d source=%d target=%d outcome=range-expired endpoint=(%.3f,%.3f,%.3f) distance=%.3f flight_ms=%d",
+			"RakNet projectile trajectory resolved kind=hero-basic projectile=%d source=%d target=%d outcome=%s endpoint=(%.3f,%.3f,%.3f) distance=%.3f flight_ms=%d",
 			schedule.projectileObjectID, schedule.sourceObjectID, schedule.targetObjectID,
-			result.Position.X, result.Position.Y, result.Position.Z, result.Distance,
+			outcome, result.Position.X, result.Position.Y, result.Position.Z, result.Distance,
 			(e.deadline - schedule.projectile.HitDelay).Milliseconds(),
 		)
 		return append(packets, impactPackets...), nil

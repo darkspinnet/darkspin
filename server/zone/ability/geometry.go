@@ -5,7 +5,6 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
-	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
 func Distance(first game.Vec3, second game.Vec3) float32 {
@@ -33,8 +32,7 @@ func CursorTarget(
 	selectedObjectID := uint32(0)
 	selectedDistance := float32(math.MaxFloat32)
 	for _, enemy := range enemies.LiveSnapshots() {
-		if enemy.Plan.ObjectID == sourceObjectID ||
-			enemy.Faction != zonenpc.FactionNonPlayerAligned {
+		if enemy.Plan.ObjectID == sourceObjectID || !IsHostileTarget(enemy) {
 			continue
 		}
 		maximumDistance := radius + max(

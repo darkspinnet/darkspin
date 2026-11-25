@@ -1,0 +1,38 @@
+Embedded Lua 5.1 decompiler
+=========================
+
+The Rust wrapper uses unluac-rs at commit
+3186d2e392e44a2ddaadd1826a779c98c718be53 (MIT), with every transitive
+dependency pinned by Cargo.lock. It accepts native bytecode on stdin,
+emits strict Lua 5.1 source on stdout, and reports failures on stderr.
+It does not execute the supplied Lua chunk. The Go host grants no filesystem,
+network, environment, or subprocess capabilities.
+
+The WASM binary is generated under bin/cache/lua-wasm, outside source control.
+A Go build overlay supplies its package-local logical embed path. From the repository root, run:
+
+  mage darkrun:preparelua
+
+Preparation validates the fingerprint and module hashes in the cached bundle
+under bin/cache/lua-wasm. A cache miss builds the compiler and decompiler from
+pinned source. To force that rebuild, run mage darkrun:buildluawasm.
+
+Source builds require Rust 1.99.1 with wasm32-wasip1 installed; Windows uses
+1.99.1-x86_64-pc-windows-gnu plus a GNU native linker. The preparation target
+keeps Cargo output and its default tool caches under bin/cache/lua-decompiler.
+See ../../compiler/wasm/README.md for the C compiler prerequisites.
+
+CI builds and caches this bundle in one source-build job, then passes it to
+application build jobs as an internal artifact. Those jobs and deployed
+applications require no Rust or external Lua tools. Direct go build users must
+run the preparation target first and pass -overlay=bin/cache/lua-wasm/overlay.json
+to go build. Mage application builds prepare and configure GOFLAGS automatically.
+
+Dependency license notices are consolidated in the root ATTRIBUTION.txt.
+The Go build overlay embeds that same file for binary distribution. When updating dependencies, regenerate the notices from each
+pinned package's license files, retaining additional BSD and Unicode notices
+where required. Also preserve the Rust toolchain's COPYRIGHT-library notices
+for the linked standard library/runtime dependencies.
+
+Reference SHA-256 of the original Windows source build:
+8114bad2c991103ffd387a9370568fb674e316c451732a7d5754bc06a6286164

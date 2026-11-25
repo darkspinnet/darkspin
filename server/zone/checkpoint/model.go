@@ -83,6 +83,8 @@ type ExperienceAward struct {
 }
 
 type Snapshot struct {
+	ZoneRules                  game.ZoneRules
+	IsZoneRuleSnapshotSet      bool
 	EnemyPopulationRules       game.EnemyPopulationRules
 	BossSpawnRules             game.BossSpawnRules
 	IsSpawnRuleSnapshotSet     bool
@@ -93,6 +95,7 @@ type Snapshot struct {
 	ZoneID                     uint64
 	RunSeed                    uint64
 	IsReplayRandomized         bool
+	IsNoReplay                 bool
 	ZoneGeneration             uint64
 	CompletionID               uint64
 	Revision                   uint64
@@ -155,6 +158,12 @@ func Validate(
 ) error {
 	if snapshot.Version != Version {
 		return fmt.Errorf("checkpointVersion[%d]: unsupported", snapshot.Version)
+	}
+	if snapshot.IsZoneRuleSnapshotSet {
+		err := snapshot.ZoneRules.Validate()
+		if err != nil {
+			return fmt.Errorf("checkpointZoneRules: %w", err)
+		}
 	}
 	if snapshot.IsSpawnRuleSnapshotSet {
 		err := snapshot.EnemyPopulationRules.Validate()

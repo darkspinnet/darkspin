@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/accountaccess"
 	"github.com/darkspinnet/darkspin/server/blaze/tdf"
 	"github.com/darkspinnet/darkspin/server/chat"
 	"github.com/darkspinnet/darkspin/server/party"
@@ -355,7 +356,23 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 		}
 		commandName, isCommand := messagingCommandName(body)
 		if isCommand {
-			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /emote, /taunt, /ss, /bug, /b, /ping, /hint, /loc, /stat, /follow, /ai, /effect, /summon, /level, /warp, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
+			err = messenger.AuthorizeCommand(ctx, user.AccountID(), commandName)
+			if err != nil {
+				denialBody := "This command requires administrator access on this server."
+				if !errors.Is(err, accountaccess.ErrAccessDenied) && !errors.Is(err, accountaccess.ErrNotFound) {
+					denialBody = "Unable to check command permissions. Try again."
+				}
+				if request.Session.server != nil && request.Session.server.logger != nil {
+					request.Session.server.logger.Printf("Blaze chat command denied user=%d command=%s: %v",
+						user.AccountID(), commandName, err)
+				}
+				replyErr := queueMessagingSystemResponse(request, user, denialBody)
+				if replyErr != nil {
+					return nil, fmt.Errorf("commandDeniedReply: %w", replyErr)
+				}
+				return &Response{ErrorCode: messagingErrorUnknown}, nil
+			}
+			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /emote, /taunt, /ss, /bug, /b, /ping, /hint, /loc, /stat, /follow, /ai, /effect, /summon, /level, /warp, /noreplay, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
 			if commandName == "/help" {
 				responseBody = darkspinChatHelp
 			}
@@ -417,7 +434,11 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 				} else if errors.Is(snapshotErr, chat.ErrSnapshotUnavailable) {
 					responseBody = "Sync Snapshot is unavailable on this server"
 				} else {
-					return nil, fmt.Errorf("commandSnapshot: %w", snapshotErr)
+					responseBody = "Sync Snapshot failed. Check the server logs for details."
+					if request.Session != nil && request.Session.server != nil && request.Session.server.logger != nil {
+						request.Session.server.logger.Printf("Sync Snapshot command failed user=%d game=%d action=%q: %v",
+							user.Account.ID, user.CurrentGameID(), snapshotCommand.Action, snapshotErr)
+					}
 				}
 			}
 			if commandName == "/ping" {
@@ -608,6 +629,37 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 						} else if !errors.Is(levelErr, chat.ErrLevelUnavailable) {
 							return nil, fmt.Errorf("commandLevel: %w", levelErr)
 						}
+					}
+				}
+			}
+			if commandName == "/noreplay" {
+				responseBody = "Syntax: /noreplay [on|off]"
+				fields := strings.Fields(body)
+				var isEnabled *bool
+				isValid := len(fields) == 1
+				if len(fields) == 2 {
+					switch strings.ToLower(fields[1]) {
+					case "on":
+						enabled := true
+						isEnabled = &enabled
+						isValid = true
+					case "off":
+						enabled := false
+						isEnabled = &enabled
+						isValid = true
+					}
+				}
+				if isValid {
+					isActive, toggleErr := messenger.SetNoReplay(ctx, chat.NoReplayRequest{
+						Sender:    chat.Participant{ID: user.Account.ID, Name: user.DisplayName},
+						IsEnabled: isEnabled,
+					})
+					if toggleErr != nil {
+						return nil, fmt.Errorf("commandNoReplay: %w", toggleErr)
+					}
+					responseBody = "No replay OFF: future campaign missions use normal replay selection."
+					if isActive {
+						responseBody = "No replay ON for this login session: when hosting, future campaign missions use their seeded first-time map and roster."
 					}
 				}
 			}
@@ -828,7 +880,9 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 					})
 					if eventErr == nil {
 						responseBody = "Defeating all live enemies"
-					} else if !errors.Is(eventErr, chat.ErrEventUnavailable) {
+					} else if errors.Is(eventErr, chat.ErrEventUnavailable) {
+						responseBody = "This command is unavailable. Join an active mission first."
+					} else {
 						return nil, fmt.Errorf("commandKill: %w", eventErr)
 					}
 				}
@@ -873,7 +927,9 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 					})
 					if eventErr == nil {
 						responseBody = "Completing the active level with victory"
-					} else if !errors.Is(eventErr, chat.ErrEventUnavailable) {
+					} else if errors.Is(eventErr, chat.ErrEventUnavailable) {
+						responseBody = "This command is unavailable. Join an active mission first."
+					} else {
 						return nil, fmt.Errorf("commandVictory: %w", eventErr)
 					}
 				}
@@ -1091,7 +1147,7 @@ const victorySyntax = "Syntax: /victory"
 const defeatSyntax = "Syntax: /defeat"
 
 const darkspinChatHelp = "Darkspin: /help | /emote (Mod only) | /taunt (availability info) | " + snapshotSyntax + " | /bug <what happened> | /b <what happened> | /ping | /hint | /loc | /stat | /follow [ally name] | /ai | /effect <exact-authored-name> [world] | " +
-	"/summon <rigid> <primary> <secondary> <suffix> | /level <1-100> | /warp [area] | /spawn <noun> | /scale <multiplier|reset> [radius] [noun filter] | /god (toggle invulnerability) | /drop create [weapon|hand|foot|offense|defense|utility] | /dna <amount> | " +
+	"/summon <rigid> <primary> <secondary> <suffix> | /level <1-100> | /warp [area] | /noreplay [on|off] | /spawn <noun> | /scale <multiplier|reset> [radius] [noun filter] | /god (toggle invulnerability) | /drop create [weapon|hand|foot|offense|defense|utility] | /dna <amount> | " +
 	"/damage <amount> | /heal | /power [negative amount] | /mana [negative amount] | /event [1|security-next|2|boss-start|3|boss-complete] | /goto <x> <y> <z> | /kill | /reset | /recap | /victory | /defeat | /exit | " +
 	"Built-in: /tell <player> <message> | /party <message> | /game <message> | /lobby <message> | " +
 	"/invite <player> | /leave | /friend <player> | /unfriend <player> | /block <player> | " +
@@ -1225,7 +1281,12 @@ func queueMessagingSystemResponse(request *Request, user *sporenet.User, body st
 		}}),
 		tdf.FieldNamed("TIME", tdf.IntegerValue(uint64(time.Now().Unix()))),
 	}
-	return request.QueueUserNotification(user.Account.ID, MessagingComponentID, 0x01, notification)
+	err := request.QueueUserNotification(user.Account.ID, MessagingComponentID, 0x01, notification)
+	if err != nil {
+		return fmt.Errorf("systemQueue: %w", err)
+	}
+	recordScenarioCommandReply(request, user, body)
+	return nil
 }
 
 // NotifySystemChat sends one unsolicited Darkspin chat line to every active

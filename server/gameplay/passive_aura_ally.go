@@ -7,6 +7,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
+	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
 	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
@@ -64,8 +65,9 @@ func (e gameplayPendingRuntime) refreshNativeAllySilenceLocked(member *gameplayP
 			!candidate.Plan.IsIntroductionHidden && candidate.Faction == zonenpc.FactionNonPlayerAligned &&
 			zonenpc.NativePassiveAura(candidate.Plan) == "CitadelSpecialTwo_SilenceAura" &&
 			candidate.Plan.Position.Sub(position).Length() <= 2 {
-			source = candidate
-			break
+			if source.Plan.ObjectID == 0 || (current != nil && current.record.SourceObjectID == candidate.Plan.ObjectID) {
+				source = candidate
+			}
 		}
 	}
 	if source.Plan.ObjectID == 0 {
@@ -83,9 +85,16 @@ func (e gameplayPendingRuntime) refreshNativeAllySilenceLocked(member *gameplayP
 		SourceObjectID: source.Plan.ObjectID, TargetObjectID: targetObjectID,
 		InitiatorObject: source.Plan.ObjectID, Rank: uint32(zonenpc.EffectivePassiveRank(source.Plan)),
 		Kind: zoneeffect.ModifierKindDebuff, Duration: 500 * time.Millisecond, ExpiresAt: now.Add(500 * time.Millisecond)}
-	created, err := effectraknet.ModifierCreate(effectraknet.ModifierCreateRequest{
-		SourceObjectID: record.SourceObjectID, TargetObjectID: record.TargetObjectID,
-		ModifierID: record.GUID, InstanceID: record.InstanceID, Duration: record.Duration, Timestamp: timestamp})
+	created, err := marshalNativeSilenceChild(current, record, timestamp)
+	reaction := laserModifierReaction{}
+	if err == nil && isNPC {
+		var isAdmitted bool
+		reaction, isAdmitted, err = e.registry.admitLaserControlModifierLocked(
+			member, targetObjectID, current.instanceID, sim.AbilityStatusKindSilence, now, record.ExpiresAt)
+		if err == nil && !isAdmitted {
+			return e.rejectNativeAllySilenceLocked(member, current, isNew)
+		}
+	}
 	if err == nil {
 		if isNew {
 			err = member.trackCampaignNPCModifier(current)
@@ -97,6 +106,9 @@ func (e gameplayPendingRuntime) refreshNativeAllySilenceLocked(member *gameplayP
 		}
 	}
 	if err != nil {
+		if isNPC {
+			member.zone.NPCs().ClearSilenceModifier(targetObjectID, current.instanceID)
+		}
 		if isNew {
 			member.untrackCampaignNPCModifier(current)
 			isCreated, releaseErr := current.release(e.modifierPool)
@@ -109,10 +121,10 @@ func (e gameplayPendingRuntime) refreshNativeAllySilenceLocked(member *gameplayP
 	if isNew {
 		current.create()
 	}
-	if isNPC {
-		err = member.zone.NPCs().ApplySilence(targetObjectID, record.ExpiresAt)
-	} else {
-		err = member.zone.Companion().ApplySilence(targetObjectID, record.ExpiresAt)
+	if !isNPC {
+		current.companionSilence = &companionSilenceControl{companion: member.zone.Companion(),
+			objectID: targetObjectID, instanceID: current.instanceID}
+		err = member.zone.Companion().ApplySilenceModifier(targetObjectID, current.instanceID, record.ExpiresAt)
 	}
 	if err != nil {
 		member.untrackCampaignNPCModifier(current)
@@ -126,5 +138,30 @@ func (e gameplayPendingRuntime) refreshNativeAllySilenceLocked(member *gameplayP
 	if err != nil {
 		return nil, fmt.Errorf("allySilenceAttribute: %w", err)
 	}
-	return [][]byte{created, attribute}, nil
+	reaction.commit()
+	return append(reaction.packets, created, attribute), nil
+}
+
+func (e gameplayPendingRuntime) rejectNativeAllySilenceLocked(member *gameplayPeerSession,
+	run *campaignNPCModifierRun, isNew bool,
+) ([][]byte, error) {
+	var packet []byte
+	if !isNew {
+		var err error
+		packet, err = effectraknet.ModifierDelete(run.record.TargetObjectID, run.instanceID)
+		if err != nil {
+			return nil, fmt.Errorf("allyRejectedDelete: %w", err)
+		}
+	}
+	member.zone.NPCs().ClearSilenceModifier(run.record.TargetObjectID, run.instanceID)
+	member.untrackCampaignNPCModifier(run)
+	member.zone.Effect().Remove(run.instanceID)
+	isCreated, err := run.release(e.modifierPool)
+	if err != nil {
+		return nil, fmt.Errorf("allyRejectedRelease: %w", err)
+	}
+	if isCreated && packet != nil {
+		return [][]byte{packet}, nil
+	}
+	return nil, nil
 }

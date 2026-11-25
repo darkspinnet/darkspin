@@ -16,6 +16,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	server "github.com/darkspinnet/darkspin/server/runtime"
+	"github.com/darkspinnet/darkspin/server/runtime/playerstore"
 	"github.com/darkspinnet/darkspin/server/sporenet"
 	"github.com/jmoiron/sqlx"
 	"github.com/spf13/cobra"
@@ -73,7 +74,15 @@ type databaseUserCopyResult struct {
 }
 
 func newDatabaseCommand() *cobra.Command {
-	options := databaseCommandOptions{configPath: game.DefaultConfigFilename, limit: defaultDatabaseQueryLimit}
+	defaultConfigPath := strings.TrimSpace(os.Getenv("DARKSPIN_CONFIG_PATH"))
+	bootstrapPath := strings.TrimSpace(os.Getenv("DARKSPIN_BOOTSTRAP_PATH"))
+	if defaultConfigPath == "" && bootstrapPath != "" {
+		defaultConfigPath = filepath.Join(bootstrapPath, "runtime", game.DefaultConfigFilename)
+	}
+	if defaultConfigPath == "" {
+		defaultConfigPath = game.DefaultConfigFilename
+	}
+	options := databaseCommandOptions{configPath: defaultConfigPath, limit: defaultDatabaseQueryLimit}
 	databaseCmd := &cobra.Command{
 		Use:   "db <table> <get|bget|set|complete|copy|undelete|swap> [params...]",
 		Short: "Inspect or update configured database tables",
@@ -86,7 +95,7 @@ func newDatabaseCommand() *cobra.Command {
 			return nil
 		},
 	}
-	databaseCmd.Flags().StringVar(&options.configPath, "config", game.DefaultConfigFilename, "path to darkspin.toml")
+	databaseCmd.Flags().StringVar(&options.configPath, "config", defaultConfigPath, "path to darkspin.toml (defaults to DARKSPIN_CONFIG_PATH when set)")
 	databaseCmd.Flags().IntVar(&options.limit, "limit", defaultDatabaseQueryLimit, "maximum rows returned by get")
 	databaseCmd.Flags().StringVar(&options.binaryOutputPath, "output", "", "path for bget binary output")
 	databaseCmd.Flags().StringVar(&options.binaryDecode, "decode", "", "optional bget payload codec (zlib)")
@@ -102,9 +111,18 @@ func runDatabaseCommand(ctx context.Context, output io.Writer, options databaseC
 	if err != nil {
 		return fmt.Errorf("configPath: %w", err)
 	}
-	config, _, err := game.LoadConfig(configPath)
+	var config *game.Config
+	var isGenerated bool
+	if playerstore.IsEnvironmentConfigured() {
+		config, isGenerated, err = game.LoadDedicatedConfig(configPath)
+	} else {
+		config, isGenerated, err = server.LoadLocalConfiguration(configPath)
+	}
 	if err != nil {
 		return fmt.Errorf("configLoad: %w", err)
+	}
+	if isGenerated && playerstore.IsEnvironmentConfigured() {
+		return errors.New("dedicated database settings require environment configuration")
 	}
 	driver := strings.ToLower(strings.TrimSpace(config.String(game.ConfigStorageDriver)))
 	if driver != "" && driver != "sqlite" {
@@ -116,6 +134,16 @@ func runDatabaseCommand(ctx context.Context, output io.Writer, options databaseC
 	}
 	action := strings.ToLower(arguments[1])
 	parameters := arguments[2:]
+	if action == "set" && (table == "account_access" || table == "admin_event") {
+		return errors.New("direct access/audit writes are forbidden; use db user set status <integer> [ip_limit <IP|CIDR|none>] where <id|login_name>=<account>")
+	}
+	if action == "set" && table == "user" && len(parameters) > 0 && (strings.EqualFold(parameters[0], "status") || strings.EqualFold(parameters[0], "ip_limit")) {
+		err = databaseSetAccess(ctx, output, configPath, parameters)
+		if err != nil {
+			return fmt.Errorf("accessSet: %w", err)
+		}
+		return nil
+	}
 	if action == "swap" {
 		err = databaseSwapProfiles(ctx, output, configPath, table, parameters)
 		if err != nil {
@@ -177,7 +205,7 @@ func runDatabaseCommand(ctx context.Context, output io.Writer, options databaseC
 	if err != nil {
 		return fmt.Errorf("contentPath: %w", err)
 	}
-	target, err := openConfiguredDatabaseTarget(ctx, config, runtimePath, contentPath, table)
+	target, err := openConfiguredDatabaseTarget(ctx, runtimePath, contentPath, table)
 	if err != nil {
 		return fmt.Errorf("targetOpen: %w", err)
 	}
@@ -308,7 +336,14 @@ func databaseGet(ctx context.Context, output io.Writer, target *databaseTarget, 
 	if err != nil {
 		return fmt.Errorf("predicateParse: %w", err)
 	}
-	query, values := buildDatabaseWhere(`SELECT * FROM `+quoteDatabaseIdentifier(table), predicates)
+	selectQuery := `SELECT * FROM ` + quoteDatabaseIdentifier(table)
+	if table == "user" {
+		selectQuery, err = databaseUserSelect(ctx, target)
+		if err != nil {
+			return fmt.Errorf("accessSelect: %w", err)
+		}
+	}
+	query, values := buildDatabaseWhere(selectQuery, predicates)
 	if _, isFound := columns["id"]; isFound {
 		query += ` ORDER BY ` + quoteDatabaseIdentifier("id")
 	}
@@ -323,6 +358,14 @@ func databaseGet(ctx context.Context, output io.Writer, target *databaseTarget, 
 	if err != nil {
 		return fmt.Errorf("rowRead: %w", err)
 	}
+	if table == "user" {
+		for _, row := range resultRows {
+			isAdmin, isInteger := row["is_admin"].(int64)
+			if isInteger {
+				row["is_admin"] = isAdmin != 0
+			}
+		}
+	}
 	result := databaseGetResult{Database: target.name, Table: table, Rows: resultRows}
 	err = writeDatabaseJSON(output, result)
 	if err != nil {
@@ -332,10 +375,16 @@ func databaseGet(ctx context.Context, output io.Writer, target *databaseTarget, 
 }
 
 func databaseSet(ctx context.Context, output io.Writer, target *databaseTarget, table string, columns map[string]struct{}, parameters []string) error {
+	if table == "account_access" || table == "admin_event" {
+		return errors.New("direct access and audit table writes are forbidden")
+	}
 	if len(parameters) < 4 {
 		return errors.New("usage: db <table> set <key> <value> where <field><operator><value>")
 	}
 	key := strings.ToLower(parameters[0])
+	if table == "user" && (key == "status" || key == "ip_limit") {
+		return errors.New("account access updates require the audited access operation")
+	}
 	if _, isFound := columns[key]; !isFound {
 		return fmt.Errorf("columnMissing: %q", key)
 	}

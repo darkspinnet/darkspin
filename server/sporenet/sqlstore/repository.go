@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	activitysql "github.com/darkspinnet/darkspin/server/activity/sqlstore"
 	"github.com/darkspinnet/darkspin/server/sporenet"
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
@@ -76,6 +77,21 @@ func New(ctx context.Context, path string, options Options) (*Repository, error)
 		closeErr := db.Close()
 		return nil, fmt.Errorf("schemaInitialize: %w", errors.Join(err, closeErr))
 	}
+	err = repository.AccountAccess().EnsureSchema(ctx)
+	if err != nil {
+		closeErr := db.Close()
+		return nil, fmt.Errorf("accessSchema: %w", errors.Join(err, closeErr))
+	}
+	err = repository.ensureActivitySchema(ctx)
+	if err != nil {
+		closeErr := db.Close()
+		return nil, fmt.Errorf("activitySchema: %w", errors.Join(err, closeErr))
+	}
+	err = repository.CapacityStore().EnsureSchema(ctx, false)
+	if err != nil {
+		closeErr := db.Close()
+		return nil, fmt.Errorf("capacitySchema: %w", errors.Join(err, closeErr))
+	}
 	return repository, nil
 }
 
@@ -91,8 +107,25 @@ func (e *Repository) Close() error {
 	return nil
 }
 
-// Create inserts a complete profile in one transaction.
+// Create inserts an imported, cloned, or diagnostic profile without signup accounting.
 func (e *Repository) Create(ctx context.Context, record sporenet.UserRecord) (int64, error) {
+	userID, err := e.create(ctx, record, false)
+	if err != nil {
+		return 0, fmt.Errorf("profileCreate: %w", err)
+	}
+	return userID, nil
+}
+
+// CreateRegistered commits a genuine signup and its anonymous daily total atomically.
+func (e *Repository) CreateRegistered(ctx context.Context, record sporenet.UserRecord) (int64, error) {
+	userID, err := e.create(ctx, record, true)
+	if err != nil {
+		return 0, fmt.Errorf("registrationCreate: %w", err)
+	}
+	return userID, nil
+}
+
+func (e *Repository) create(ctx context.Context, record sporenet.UserRecord, isRegistration bool) (int64, error) {
 	if ctx == nil {
 		return 0, errors.New("nil context")
 	}
@@ -123,9 +156,19 @@ func (e *Repository) Create(ctx context.Context, record sporenet.UserRecord) (in
 	if err != nil {
 		return 0, fmt.Errorf("createIdentity: %w", err)
 	}
+	err = e.AccountAccess().InitializeUser(ctx, tx, id)
+	if err != nil {
+		return 0, fmt.Errorf("createAccess: %w", err)
+	}
 	err = writeDependents(ctx, tx, record)
 	if err != nil {
 		return 0, fmt.Errorf("createWrite: %w", err)
+	}
+	if isRegistration {
+		err = activitysql.RecordSignup(ctx, tx, record.CreateDT)
+		if err != nil {
+			return 0, fmt.Errorf("createSignup: %w", err)
+		}
 	}
 	err = tx.Commit()
 	if err != nil {
@@ -342,6 +385,22 @@ func (e *Repository) Save(ctx context.Context, record sporenet.UserRecord) error
 	if affected == 0 {
 		return fmt.Errorf("saveMissing: %w", sporenet.ErrUserNotFound)
 	}
+	var previousDNAEarned uint64
+	err = tx.GetContext(ctx, &previousDNAEarned, tx.Rebind(`SELECT dna_earned FROM user_stat WHERE user_id = ?`), record.Account.ID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("saveDNARead: %w", err)
+	}
+	if record.Stats.DNAEarned < previousDNAEarned {
+		return errors.New("DNA earnings cannot decrease")
+	}
+	err = activitysql.RecordDNAEarned(ctx, tx, record.Account.ID, record.Stats.DNAEarned-previousDNAEarned)
+	if err != nil {
+		return fmt.Errorf("saveDNARecord: %w", err)
+	}
+	err = recordCampaignCompletions(ctx, tx, record)
+	if err != nil {
+		return fmt.Errorf("saveCampaignCompletion: %w", err)
+	}
 	err = clearDependents(ctx, tx, record.Account.ID)
 	if err != nil {
 		return fmt.Errorf("saveClear: %w", err)
@@ -400,6 +459,10 @@ func (e *Repository) initializeSchema(ctx context.Context) error {
 	err = ensurePVPRewardColumn(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("schemaPVPReward: %w", err)
+	}
+	err = ensureDNAEarnedColumn(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("schemaDNAEarned: %w", err)
 	}
 	err = normalizeInventoryCapacity(ctx, tx)
 	if err != nil {
@@ -610,6 +673,11 @@ func normalizeOptions(options Options) Options {
 
 func sqliteDSN(path string, busyTimeout time.Duration) string {
 	parameters := url.Values{}
+	// Reserve the writer before schema inspection or other read/modify/write
+	// transactions. Deferred upgrades can fail with SQLITE_BUSY immediately,
+	// bypassing the busy timeout when another pool has advanced the snapshot.
+	// The driver keeps explicit read-only transactions deferred for WAL readers.
+	parameters.Set("_txlock", "immediate")
 	parameters.Add("_pragma", "busy_timeout("+strconv.FormatInt(busyTimeout.Milliseconds(), 10)+")")
 	parameters.Add("_pragma", "foreign_keys(1)")
 	parameters.Add("_pragma", "journal_mode(WAL)")

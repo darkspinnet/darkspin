@@ -19,6 +19,10 @@ func writeAnalysisMarkdown(path string, report analysisReport) error {
 	document.WriteString(" confidence)\n")
 	document.WriteString("- Trigger: ")
 	document.WriteString(markdownText(report.Trigger))
+	if report.Category != "" {
+		document.WriteString("\n- Category: ")
+		document.WriteString(markdownText(report.Category))
+	}
 	document.WriteString("\n- Context: ")
 	document.WriteString(markdownText(report.Context))
 	document.WriteString("\n- Summary: ")

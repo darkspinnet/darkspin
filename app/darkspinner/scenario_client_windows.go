@@ -13,6 +13,8 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/darkspinnet/darkspin/app/darkspinner/scenariobridge"
+
 	"github.com/darkspinnet/darkspin/server/scenario"
 	"golang.org/x/sys/windows"
 )
@@ -92,6 +94,19 @@ func (e *scenarioClient) BeforeResume(ctx context.Context, process uintptr, modu
 		return errors.New("loaded Fang does not expose scenario-v1")
 	}
 	e.capability = capability
+	entryRVA, err := exportedFunctionRVA(fangPath, "RecapScenarioControlThread")
+	if err != nil {
+		return fmt.Errorf("controlRVA: %w", err)
+	}
+	processID, err := windows.GetProcessId(windows.Handle(process))
+	if err != nil {
+		return fmt.Errorf("controlPID: %w", err)
+	}
+	isStarted := scenariobridge.Start(process, uintptr(moduleHandle)+uintptr(entryRVA), processID,
+		e.environmentEntries["DARKSPIN_DEBUG_PIPE"], e.environmentEntries["DARKSPIN_DEBUG_TOKEN"], e.environmentEntries["DARKSPIN_CLIENT_TRACE"])
+	if !isStarted {
+		return errors.New("launcher could not start the native scenario bridge")
+	}
 	if e.observer != nil {
 		err = e.observer.BeforeResume(ctx, process, moduleHandle, fangPath)
 		if err != nil {

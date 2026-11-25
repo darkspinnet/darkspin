@@ -58,8 +58,8 @@ func (e Store) generateBot(ctx context.Context, sourceID, sourceVersion, noun ui
 			return 0, 0, fmt.Errorf("botTemplateRead: %w", err)
 		}
 	}
-	// Do not reuse images generated without the native carrier checksum footer.
-	identity := append([]byte("darkspin-bot-appearance-v3"), source...)
+	// Invalidate older variation recipes while retaining the native carrier footer.
+	identity := append([]byte("darkspin-bot-appearance-v4"), source...)
 	identity = binary.LittleEndian.AppendUint64(identity, seed)
 	digest := sha256.Sum256(identity)
 	id := binary.LittleEndian.Uint32(digest[:4]) | 0x80000000

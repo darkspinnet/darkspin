@@ -72,7 +72,7 @@ func ConvertPathWithNamesAndAudioAliases(ctx context.Context, sourcePath, destin
 			}
 			return nil
 		}
-		document, readErr := ReadPath(sourcePath)
+		document, readErr := ReadPathContext(ctx, sourcePath)
 		if readErr != nil {
 			return fmt.Errorf("dsRead: %w", readErr)
 		}
@@ -146,9 +146,30 @@ func rewritePath(ctx context.Context, sourcePath, destinationPath string, docume
 		if pathErr != nil {
 			return fmt.Errorf("sourcePath[%d]: %w", ordinal, pathErr)
 		}
-		payload, readErr := readResource(sourceDefinitionPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry.Type)
+		if resource.Entry.Type == luaResourceType {
+			isLua, luaErr := hasRenderDefinition(sourceDefinitionPath, "LUA")
+			if luaErr != nil {
+				return fmt.Errorf("luaDefinition[%d]: %w", ordinal, luaErr)
+			}
+			if isLua {
+				destinationDefinitionPath, destinationErr := safePath(destinationPath, resource.PayloadPath)
+				if destinationErr != nil {
+					return fmt.Errorf("luaDestination[%d]: %w", ordinal, destinationErr)
+				}
+				err = copyLuaSourceResource(ctx, sourceDefinitionPath, destinationDefinitionPath)
+				if err != nil {
+					return fmt.Errorf("luaCopy[%d]: %w", ordinal, err)
+				}
+				continue
+			}
+		}
+		payload, readErr := readResourceContext(ctx, sourceDefinitionPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry.Type)
 		if readErr != nil {
 			return fmt.Errorf("resourceRead[%d]: %w", ordinal, readErr)
+		}
+		payload, readErr = decodeLegacyLuaResource(sourceDefinitionPath, resource.Entry, payload)
+		if readErr != nil {
+			return fmt.Errorf("resourceDecode[%d]: %w", ordinal, readErr)
 		}
 		destinationDefinitionPath, pathErr := safePath(destinationPath, resource.PayloadPath)
 		if pathErr != nil {
@@ -158,7 +179,7 @@ func rewritePath(ctx context.Context, sourcePath, destinationPath string, docume
 		if err != nil {
 			return fmt.Errorf("resourceMkdir[%d]: %w", ordinal, err)
 		}
-		err = writeResource(destinationDefinitionPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry, bytes.NewReader(payload), names)
+		err = writeResource(ctx, destinationDefinitionPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry, bytes.NewReader(payload), names)
 		if err != nil {
 			return fmt.Errorf("resourceWrite[%d]: %w", ordinal, err)
 		}
@@ -166,6 +187,10 @@ func rewritePath(ctx context.Context, sourcePath, destinationPath string, docume
 	err = finalizeScaleformTypeScriptWorkspace(destinationPath)
 	if err != nil {
 		return fmt.Errorf("scaleformWorkspace: %w", err)
+	}
+	err = finalizeLuaWorkspace(destinationPath)
+	if err != nil {
+		return fmt.Errorf("luaWorkspace: %w", err)
 	}
 	err = copyAudioWAVs(sourcePath, destinationPath, manifest)
 	if err != nil {
@@ -175,6 +200,10 @@ func rewritePath(ctx context.Context, sourcePath, destinationPath string, docume
 	err = WritePath(destinationPath, rewritten)
 	if err != nil {
 		return fmt.Errorf("manifestWrite: %w", err)
+	}
+	err = copyLuaIndex(sourcePath, destinationPath)
+	if err != nil {
+		return fmt.Errorf("luaIndexCopy: %w", err)
 	}
 	isComplete = true
 	return nil
@@ -243,7 +272,7 @@ func ExtractPackageResourcePathWithNames(ctx context.Context, sourcePath, destin
 		return fmt.Errorf("resourceOpen: %w", err)
 	}
 	identity := strings.TrimSuffix(dbpf.ResourceName(ordinal, entry), ".bin")
-	err = writeResource(destinationPath, identity, ordinal, entry, payload, names)
+	err = writeResource(ctx, destinationPath, identity, ordinal, entry, payload, names)
 	if err != nil {
 		return fmt.Errorf("resourceWrite: %w", err)
 	}
@@ -296,7 +325,11 @@ func extractPackagePathWithLinkRoot(ctx context.Context, sourcePath, destination
 	if err != nil {
 		return fmt.Errorf("animationNames: %w", err)
 	}
-	resourcePaths := packageResourcePaths(manifest.Resources, names)
+	luaNames, err := packageLuaNames(ctx, reader, manifest.Resources, names)
+	if err != nil {
+		return fmt.Errorf("luaNames: %w", err)
+	}
+	resourcePaths := packageResourcePathsWithLua(manifest.Resources, names, luaNames)
 	for ordinal := range manifest.Resources {
 		manifest.Resources[ordinal].PayloadPath = resourcePaths[ordinal]
 	}
@@ -316,6 +349,9 @@ func extractPackagePathWithLinkRoot(ctx context.Context, sourcePath, destination
 		if err != nil {
 			return fmt.Errorf("resourceContext[%d]: %w", ordinal, err)
 		}
+		if resource.Entry.Type == luaResourceType {
+			continue
+		}
 		payloadPath, pathErr := safePath(destinationPath, resource.PayloadPath)
 		if pathErr != nil {
 			return fmt.Errorf("resourcePath[%d]: %w", ordinal, pathErr)
@@ -334,14 +370,22 @@ func extractPackagePathWithLinkRoot(ctx context.Context, sourcePath, destination
 		if openErr != nil {
 			return fmt.Errorf("resourceOpen[%d]: %w", ordinal, openErr)
 		}
-		err = writeResource(payloadPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry, payload, names)
+		err = writeResource(ctx, payloadPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry, payload, names)
 		if err != nil {
 			return fmt.Errorf("resourceWrite[%d]: %w", ordinal, err)
 		}
 	}
+	err = writePackageLuaResources(ctx, reader, destinationPath, manifest.Resources)
+	if err != nil {
+		return fmt.Errorf("luaResources: %w", err)
+	}
 	err = finalizeScaleformTypeScriptWorkspace(destinationPath)
 	if err != nil {
 		return fmt.Errorf("scaleformWorkspace: %w", err)
+	}
+	err = finalizeLuaWorkspace(destinationPath)
+	if err != nil {
+		return fmt.Errorf("luaWorkspace: %w", err)
 	}
 	err = projectAudioResources(ctx, reader, destinationPath, manifest)
 	if err != nil {
@@ -365,6 +409,10 @@ func extractPackagePathWithLinkRoot(ctx context.Context, sourcePath, destination
 	err = WritePath(destinationPath, document)
 	if err != nil {
 		return fmt.Errorf("manifestWrite: %w", err)
+	}
+	err = writeLuaIndex(destinationPath, manifest.Resources, luaNames)
+	if err != nil {
+		return fmt.Errorf("luaIndexWrite: %w", err)
 	}
 	isComplete = true
 	return nil
@@ -428,6 +476,22 @@ func WritePath(destinationPath string, document *Document) error {
 
 // ReadPath strictly parses a DS directory and verifies its stored payloads.
 func ReadPath(sourcePath string) (*Document, error) {
+	document, err := ReadPathContext(context.Background(), sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("documentRead: %w", err)
+	}
+	return document, nil
+}
+
+// ReadPathContext reads and validates a DS directory with cancellation.
+func ReadPathContext(ctx context.Context, sourcePath string) (*Document, error) {
+	if ctx == nil {
+		return nil, errors.New("nil context")
+	}
+	err := ctx.Err()
+	if err != nil {
+		return nil, fmt.Errorf("readContext: %w", err)
+	}
 	r, err := os.Open(filepath.Join(sourcePath, ManifestName))
 	if err != nil {
 		return nil, fmt.Errorf("manifestOpen: %w", err)
@@ -505,7 +569,14 @@ func ReadPath(sourcePath string) (*Document, error) {
 		if pathErr != nil {
 			return nil, fmt.Errorf("resourcePath[%d]: %w", ordinal, pathErr)
 		}
-		storedPayload, payloadErr := readResource(payloadPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry.Type)
+		if resource.Entry.Type == luaResourceType {
+			err = validateLuaResource(ctx, payloadPath, resourceDefinitionIdentity(resource.PayloadPath))
+			if err != nil {
+				return nil, fmt.Errorf("luaValidate[%d]: %w", ordinal, err)
+			}
+			continue
+		}
+		storedPayload, payloadErr := readResourceContext(ctx, payloadPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry.Type)
 		if payloadErr != nil {
 			return nil, fmt.Errorf("resourceRead[%d]: %w", ordinal, payloadErr)
 		}
@@ -513,13 +584,17 @@ func ReadPath(sourcePath string) (*Document, error) {
 		if isDecodedDSEType(resource.Entry.Type) {
 			expectedSize = resource.Entry.Size
 		}
-		if resource.Entry.Type != animation.ResourceType && !audio.IsStreamType(resource.Entry.Type) && !audio.IsPatchType(resource.Entry.Type) && resource.Entry.Type != movie.ResourceType && !scaleform.IsResourceType(resource.Entry.Type) && len(storedPayload) != int(expectedSize) {
+		if resource.Entry.Type != luaResourceType && resource.Entry.Type != animation.ResourceType && !audio.IsStreamType(resource.Entry.Type) && !audio.IsPatchType(resource.Entry.Type) && resource.Entry.Type != movie.ResourceType && !scaleform.IsResourceType(resource.Entry.Type) && len(storedPayload) != int(expectedSize) {
 			return nil, fmt.Errorf("resourceSize[%d]: got %d, want %d", ordinal, len(storedPayload), expectedSize)
 		}
 	}
 	err = verifyFiles(sourcePath, document.Manifest)
 	if err != nil {
 		return nil, fmt.Errorf("directoryVerify: %w", err)
+	}
+	err = ctx.Err()
+	if err != nil {
+		return nil, fmt.Errorf("verifyContext: %w", err)
 	}
 	return document, nil
 }
@@ -563,6 +638,7 @@ func verifyFiles(sourcePath string, manifest *dbpf.Manifest) error {
 	}
 	resourcesByPath := make(map[string]dbpf.Resource)
 	isScaleformWorkspace := false
+	isLuaWorkspace := false
 	for ordinal, resource := range manifest.Resources {
 		resourcePath := filepath.Clean(filepath.FromSlash(resource.PayloadPath))
 		priorResource, isFound := resourcesByPath[resourcePath]
@@ -573,6 +649,23 @@ func verifyFiles(sourcePath string, manifest *dbpf.Manifest) error {
 			resourcesByPath[resourcePath] = resource
 		}
 		expectedPaths[resourcePath] = struct{}{}
+		if resource.Entry.Type == luaResourceType {
+			definitionPath := filepath.Join(rootPath, resourcePath)
+			isLua, luaErr := hasRenderDefinition(definitionPath, "LUA")
+			if luaErr != nil {
+				return fmt.Errorf("luaDefinition[%d]: %w", ordinal, luaErr)
+			}
+			if isLua {
+				isLuaWorkspace = true
+				sidecarPaths, sidecarErr := luaResourceSidecarPaths(rootPath, definitionPath)
+				if sidecarErr != nil {
+					return fmt.Errorf("luaFiles[%d]: %w", ordinal, sidecarErr)
+				}
+				for _, sidecarPath := range sidecarPaths {
+					expectedPaths[sidecarPath] = struct{}{}
+				}
+			}
+		}
 		for directoryPath := filepath.Dir(resourcePath); directoryPath != "."; directoryPath = filepath.Dir(directoryPath) {
 			expectedPaths[filepath.Join(directoryPath, ManifestName)] = struct{}{}
 		}
@@ -603,6 +696,16 @@ func verifyFiles(sourcePath string, manifest *dbpf.Manifest) error {
 	if isScaleformWorkspace {
 		expectedPaths[filepath.Clean("scaleform.d.ts")] = struct{}{}
 		expectedPaths[filepath.Clean("tsconfig.json")] = struct{}{}
+	}
+	if isLuaWorkspace {
+		expectedPaths[filepath.Clean(luaWorkspaceConfig)] = struct{}{}
+		expectedPaths[filepath.FromSlash(luaWorkspaceDefinitions)] = struct{}{}
+		_, indexErr := os.Lstat(filepath.Join(rootPath, luaIndexName))
+		if indexErr == nil {
+			expectedPaths[luaIndexName] = struct{}{}
+		} else if !errors.Is(indexErr, os.ErrNotExist) {
+			return fmt.Errorf("luaIndexStat: %w", indexErr)
+		}
 	}
 	foundPaths := make(map[string]struct{}, len(expectedPaths))
 	err = filepath.WalkDir(rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -647,7 +750,7 @@ func renderSidecarPaths(rootPath, definitionPath string) ([]string, error) {
 		if tokenizeErr != nil {
 			return nil, fmt.Errorf("definitionToken: %w", tokenizeErr)
 		}
-		if len(fields) != 2 || fields[0] != "WAV" && fields[0] != "MKV" && fields[0] != "RAW" {
+		if len(fields) != 2 || fields[0] != "WAV" && fields[0] != "MKV" && fields[0] != "RAW" && fields[0] != "SOURCE" {
 			continue
 		}
 		sidecarPath, pathErr := safePath(filepath.Dir(definitionPath), fields[1])
@@ -685,9 +788,13 @@ func (e resourcePackSource) open(ordinal int, resource dbpf.Resource) (io.ReadCl
 	if err != nil {
 		return nil, dbpf.Resource{}, fmt.Errorf("definitionPath[%d]: %w", ordinal, err)
 	}
-	storedPayload, err := readResourceWithPropertyDeclaration(definitionPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry.Type, e.propertyDeclaration)
+	storedPayload, err := readResourceWithPropertyDeclarationContext(e.ctx, definitionPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry.Type, e.propertyDeclaration)
 	if err != nil {
 		return nil, dbpf.Resource{}, fmt.Errorf("definitionRead[%d]: %w", ordinal, err)
+	}
+	storedPayload, err = decodeLegacyLuaResource(definitionPath, resource.Entry, storedPayload)
+	if err != nil {
+		return nil, dbpf.Resource{}, fmt.Errorf("definitionDecode[%d]: %w", ordinal, err)
 	}
 	if isDecodedDSEType(resource.Entry.Type) {
 		resource.Entry.StoredSize = uint32(len(storedPayload))
@@ -709,6 +816,22 @@ func packResourcesWithPropertyDeclaration(ctx context.Context, sourcePath, desti
 
 // StoredResource reads and decodes one DS resource by package ordinal.
 func (e *Document) StoredResource(sourcePath string, ordinal int) ([]byte, dbpf.Entry, error) {
+	payload, entry, err := e.StoredResourceContext(context.Background(), sourcePath, ordinal)
+	if err != nil {
+		return nil, dbpf.Entry{}, fmt.Errorf("resourceRead: %w", err)
+	}
+	return payload, entry, nil
+}
+
+// StoredResourceContext reads and decodes one resource with cancellation.
+func (e *Document) StoredResourceContext(ctx context.Context, sourcePath string, ordinal int) ([]byte, dbpf.Entry, error) {
+	if ctx == nil {
+		return nil, dbpf.Entry{}, errors.New("nil context")
+	}
+	err := ctx.Err()
+	if err != nil {
+		return nil, dbpf.Entry{}, fmt.Errorf("resourceContext: %w", err)
+	}
 	if e == nil || e.Manifest == nil {
 		return nil, dbpf.Entry{}, errors.New("nil document")
 	}
@@ -720,9 +843,13 @@ func (e *Document) StoredResource(sourcePath string, ordinal int) ([]byte, dbpf.
 	if err != nil {
 		return nil, dbpf.Entry{}, fmt.Errorf("payloadPath: %w", err)
 	}
-	storedPayload, err := readResource(payloadPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry.Type)
+	storedPayload, err := readResourceContext(ctx, payloadPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry.Type)
 	if err != nil {
 		return nil, dbpf.Entry{}, fmt.Errorf("payloadRead: %w", err)
+	}
+	storedPayload, err = decodeLegacyLuaResource(payloadPath, resource.Entry, storedPayload)
+	if err != nil {
+		return nil, dbpf.Entry{}, fmt.Errorf("payloadLegacy: %w", err)
 	}
 	if isDecodedDSEType(resource.Entry.Type) {
 		return storedPayload, resource.Entry, nil
@@ -735,7 +862,7 @@ func (e *Document) StoredResource(sourcePath string, ordinal int) ([]byte, dbpf.
 }
 
 func isDecodedDSEType(resourceType uint32) bool {
-	return resourceType == animation.ResourceType || resourceType == rw4.ResourceType || resourceType == gmsh.ResourceType || resourceType == movie.ResourceType || scaleform.IsResourceType(resourceType) || prop.IsResourceType(resourceType) || audio.IsStreamType(resourceType) || audio.IsPatchType(resourceType)
+	return resourceType == luaResourceType || resourceType == animation.ResourceType || resourceType == rw4.ResourceType || resourceType == gmsh.ResourceType || resourceType == movie.ResourceType || scaleform.IsResourceType(resourceType) || prop.IsResourceType(resourceType) || audio.IsStreamType(resourceType) || audio.IsPatchType(resourceType)
 }
 
 type parser struct {

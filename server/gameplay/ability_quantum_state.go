@@ -65,7 +65,7 @@ func (e quantumStateStatusExpiry) produce() ([][]byte, error) {
 	if e.npc == nil || e.pool == nil || e.targetID == 0 || e.instanceID == 0 {
 		return nil, nil
 	}
-	clearQuantumStateStatus(e.npc, e.targetID, e.expiresAt, e.kind)
+	clearQuantumStateStatus(e.npc, e.targetID, e.instanceID, e.expiresAt, e.kind)
 	_ = e.pool.Release(e.instanceID)
 	packet, err := effectraknet.ModifierDelete(e.targetID, e.instanceID)
 	if err != nil {
@@ -78,14 +78,13 @@ func reserveQuantumStateReactionLocked(
 	peerSession *gameplayPeerSession, sourceObjectID uint32,
 	targetObjectID uint32, timestamp uint64,
 ) error {
-	if peerSession == nil || peerSession.heroModifierRun == nil ||
-		!peerSession.heroModifierRun.isQuantumState ||
+	if peerSession == nil || peerSession.quantumStateModifier() == nil ||
 		sourceObjectID != peerSession.deployedObjectID || targetObjectID == 0 ||
 		peerSession.zone == nil || peerSession.zone.NPCs() == nil ||
 		peerSession.zone.Population() == nil {
 		return nil
 	}
-	run := peerSession.heroModifierRun
+	run := peerSession.quantumStateModifier()
 	now := run.quantum.runtime.npc.now()
 	if now.Before(run.quantum.activeAt) || now.Before(run.quantum.nextActivation) {
 		return nil
@@ -144,7 +143,7 @@ func (e quantumStateReactionStep) produce() ([][]byte, error) {
 	runtime.registry.mutex.Lock()
 	peerSession, isFound := runtime.registry.sessions[e.run.quantum.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.run.quantum.generation &&
-		peerSession.heroModifierRun == e.run && peerSession.zone != nil &&
+		peerSession.isHeroModifierCurrent(e.run) && peerSession.zone != nil &&
 		peerSession.zone.NPCs() != nil
 	if !isCurrent {
 		runtime.registry.mutex.Unlock()
@@ -209,20 +208,25 @@ func (e quantumStateReactionStep) produceStatusLocked(
 		modifierName = "QuantumBanishDebuff"
 	}
 	duration = zonenpc.CrowdControlDuration(target.Plan, duration)
-	expiresAt := runtime.npc.now().Add(duration)
+	at := runtime.npc.now()
+	expiresAt := at.Add(duration)
 	instanceID, err := runtime.npc.modifierPool.Allocate()
 	if err != nil {
 		return nil, quantumStateStatusExpiry{}, fmt.Errorf("quantumStateModifier: %w", err)
 	}
+	reaction := laserModifierReaction{}
+	isAdmitted := true
 	switch e.kind {
 	case quantumStateReactionSlow:
-		err = peerSession.zone.NPCs().ApplySlow(
-			e.targetObjectID, expiresAt, 0.75, 1,
+		err = peerSession.zone.NPCs().ApplySlowModifier(
+			e.targetObjectID, instanceID, expiresAt, 0.75, 1,
 		)
 	case quantumStateReactionStun:
-		err = peerSession.zone.NPCs().ApplyStun(e.targetObjectID, expiresAt)
+		reaction, isAdmitted, err = runtime.registry.admitLaserControlModifierLocked(
+			&peerSession, e.targetObjectID, instanceID, sim.AbilityStatusKindStun, at, expiresAt)
 	case quantumStateReactionBanish:
-		err = peerSession.zone.NPCs().ApplyBanish(e.targetObjectID, expiresAt)
+		reaction, isAdmitted, err = runtime.registry.admitLaserControlModifierLocked(
+			&peerSession, e.targetObjectID, instanceID, sim.AbilityStatusKindBanish, at, expiresAt)
 	case quantumStateReactionKnockback:
 		var movementPackets [][]byte
 		movementPackets, err = e.applyKnockbackLocked(peerSession, target)
@@ -247,18 +251,27 @@ func (e quantumStateReactionStep) produceStatusLocked(
 		_ = runtime.npc.modifierPool.Release(instanceID)
 		return nil, quantumStateStatusExpiry{}, fmt.Errorf("quantumStateStatus: %w", err)
 	}
+	if !isAdmitted {
+		releaseErr := runtime.npc.modifierPool.Release(instanceID)
+		if releaseErr != nil {
+			return nil, quantumStateStatusExpiry{}, fmt.Errorf("quantumRejectedRelease: %w", releaseErr)
+		}
+		return nil, quantumStateStatusExpiry{}, nil
+	}
 	packet, err := quantumStateModifierPacket(
 		e.run.quantum.ownerObjectID, e.targetObjectID, modifierName,
 		instanceID, duration, e.timestamp,
 	)
 	if err != nil {
 		clearQuantumStateStatus(
-			peerSession.zone.NPCs(), e.targetObjectID, expiresAt, e.kind,
+			peerSession.zone.NPCs(), e.targetObjectID, instanceID, expiresAt, e.kind,
 		)
 		_ = runtime.npc.modifierPool.Release(instanceID)
 		return nil, quantumStateStatusExpiry{}, err
 	}
-	return [][]byte{packet}, quantumStateStatusExpiry{
+	reaction.commit()
+	packets := append(reaction.packets, packet)
+	return packets, quantumStateStatusExpiry{
 		npc: peerSession.zone.NPCs(), pool: runtime.npc.modifierPool,
 		targetID: e.targetObjectID, instanceID: instanceID,
 		expiresAt: expiresAt, kind: e.kind,
@@ -266,7 +279,7 @@ func (e quantumStateReactionStep) produceStatusLocked(
 }
 
 func clearQuantumStateStatus(
-	npc *zonenpc.Session, targetObjectID uint32, expiresAt time.Time,
+	npc *zonenpc.Session, targetObjectID, instanceID uint32, expiresAt time.Time,
 	kind quantumStateReactionKind,
 ) {
 	if npc == nil {
@@ -274,11 +287,11 @@ func clearQuantumStateStatus(
 	}
 	switch kind {
 	case quantumStateReactionSlow:
-		npc.ClearSlow(targetObjectID, expiresAt)
+		npc.ClearSlowModifier(targetObjectID, instanceID)
 	case quantumStateReactionStun:
-		npc.ClearStun(targetObjectID, expiresAt)
+		npc.ClearStunModifier(targetObjectID, instanceID)
 	case quantumStateReactionBanish:
-		npc.ClearBanish(targetObjectID, expiresAt)
+		npc.ClearBanishModifier(targetObjectID, instanceID)
 	}
 }
 

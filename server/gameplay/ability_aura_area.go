@@ -21,6 +21,7 @@ const heroAuraAreaScanInterval = 250 * time.Millisecond
 const timeBubbleAbilityName = "SpacetimeRandom2"
 
 type heroAuraAreaTarget struct {
+	sleep      *sim.LuaSleepingCloudModifier
 	instanceID uint32
 	expiresAt  time.Time
 }
@@ -33,10 +34,14 @@ type heroAuraAreaProjectile struct {
 
 type heroAuraAreaRun struct {
 	mutex             sync.Mutex
+	aura              *sim.LuaAuraRuntime
+	silenceAdmission  *sim.LuaPsistormModifier
+	isLuaAura         bool
 	cast              *channelCast
 	npc               *zonenpc.Session
 	modifierPool      *modifierPool
 	targets           map[uint32]heroAuraAreaTarget
+	retiredTargets    map[uint32]uint32
 	sleepAttempts     map[uint32]struct{}
 	projectiles       map[uint32]heroAuraAreaProjectile
 	statusKind        sim.AbilityStatusKind
@@ -47,6 +52,8 @@ type heroAuraAreaRun struct {
 	isStopping        bool
 	isObjectPublished bool
 	isSleepingCloud   bool
+	cloudAction       *sim.LuaSleepingCloudAbility
+	cloudReply        cloudActionReply
 	expiresAt         time.Time
 	runtime           campaignAbilityCommandRuntime
 	originalZone      *zone.Zone
@@ -76,7 +83,7 @@ func (r campaignDamageRuntime) breakSleepingCloudOnDamage(
 	sessionKey string, generation uint64, objectID uint32,
 	descriptorMask uint32,
 ) ([][]byte, error) {
-	if objectID == 0 || descriptorMask&4 != 0 {
+	if objectID == 0 {
 		return nil, nil
 	}
 	r.registry.mutex.Lock()
@@ -85,45 +92,54 @@ func (r campaignDamageRuntime) breakSleepingCloudOnDamage(
 	if !isFound || peerSession.generation != generation || peerSession.zone == nil {
 		return nil, nil
 	}
+	err := r.registry.wakeTransferredSleepLocked(peerSession.zone, objectID, r.npc.modifierPool)
+	if err != nil {
+		return nil, fmt.Errorf("transferSleepWake: %w", err)
+	}
 	// Keep each exact run locked until its deletions are queued and its handles
 	// are retired. A scan or cleanup cannot replace a membership in between.
 	runs := make(map[*heroAuraAreaRun]heroAuraAreaTarget)
 	deletes := make([]heroAuraAreaTargetDelete, 0)
-	for _, candidate := range r.registry.sessions {
-		if candidate.zone != peerSession.zone {
+	for run := range r.registry.auraRuns {
+		if run == nil || run.statusKind != sim.AbilityStatusKindSleep ||
+			run.originalZone != peerSession.zone || run.npc != peerSession.zone.NPCs() {
 			continue
 		}
-		for _, run := range candidate.heroAuraAreas {
-			if run == nil || run.statusKind != sim.AbilityStatusKindSleep ||
-				run.npc != peerSession.zone.NPCs() {
-				continue
-			}
-			if _, isTracked := runs[run]; isTracked {
-				continue
-			}
-			run.mutex.Lock()
-			if run.isCleaned {
-				run.mutex.Unlock()
-				continue
-			}
-			target, isTracked := run.targets[objectID]
-			if !isTracked {
-				run.mutex.Unlock()
-				continue
-			}
-			defer run.mutex.Unlock()
-			runs[run] = target
-			deletes = append(deletes, heroAuraAreaTargetDelete{
-				objectID: objectID, instanceID: target.instanceID,
-			})
+		run.mutex.Lock()
+		if run.isCleaned {
+			run.mutex.Unlock()
+			continue
 		}
+		target, isTracked := run.targets[objectID]
+		if !isTracked {
+			run.mutex.Unlock()
+			continue
+		}
+		isActive, callbackErr := target.sleep.Damage(sim.LuaSleepDamage{DescriptorMask: descriptorMask})
+		if callbackErr != nil {
+			// A failed callback retires its Lua runtime. Retire the exact
+			// accepted handle too, without blocking other clouds' wakeups.
+			isActive = false
+			if r.logger != nil {
+				r.logger.Printf("RakNet sleep callback retired target=%d instance=%d: %v", objectID, target.instanceID, callbackErr)
+			}
+		}
+		if isActive {
+			run.mutex.Unlock()
+			continue
+		}
+		defer run.mutex.Unlock()
+		runs[run] = target
+		deletes = append(deletes, heroAuraAreaTargetDelete{
+			objectID: objectID, instanceID: target.instanceID,
+		})
 	}
 	packets, err := marshalAuraAreaDeletes(deletes)
 	if err != nil {
 		return nil, fmt.Errorf("sleepBreakMarshal: %w", err)
 	}
 	for run, target := range runs {
-		run.clearStatus(objectID, target.expiresAt)
+		run.clearAuraTargetStatus(objectID, target)
 		delete(run.targets, objectID)
 	}
 	// Include the attacker in the same queue boundary. Returning these packets
@@ -145,18 +161,16 @@ func (r campaignDamageRuntime) breakSleepingCloudOnDamage(
 	return nil, releaseErr
 }
 
-func (e *heroAuraAreaRun) clearStatus(objectID uint32, expiresAt time.Time) {
+func (e *heroAuraAreaRun) clearStatus(objectID, instanceID uint32, expiresAt time.Time) {
 	if e.arenaGameID != 0 {
 		e.clearArenaSphereSlowLocked(objectID)
 		return
 	}
 	switch e.statusKind {
 	case sim.AbilityStatusKindSilence:
-		e.npc.ClearSilence(objectID, expiresAt)
+		e.npc.ClearSilenceModifier(objectID, instanceID)
 	case sim.AbilityStatusKindSleep:
-		e.npc.ClearSleep(objectID, expiresAt)
-	case sim.AbilityStatusKindSlow:
-		e.npc.ClearSlow(objectID, expiresAt)
+		e.npc.ClearSleepModifier(objectID, instanceID)
 	}
 }
 
@@ -346,6 +360,18 @@ func (e heroAuraAreaSchedule) reconcile(
 		}
 		return nil, errors.New("Arena aura runtime unavailable")
 	}
+	if e.definition.Name == "Psistorm" {
+		e.run.mutex.Lock()
+		defer e.run.mutex.Unlock()
+		if e.run.isCleaned || e.run.isStopping {
+			return nil, nil
+		}
+		err := e.reconcileLuaAuraLocked(peerSession, deadline, expiresAt)
+		if err != nil {
+			return nil, fmt.Errorf("psistormAura: %w", err)
+		}
+		return nil, nil
+	}
 	live := make(map[uint32]zonenpc.Snapshot)
 	for _, target := range peerSession.zone.NPCs().LiveSnapshots() {
 		if target.Faction != zonenpc.FactionNonPlayerAligned ||
@@ -370,7 +396,7 @@ func (e heroAuraAreaSchedule) reconcile(
 			return nil, fmt.Errorf("auraExitEncode: %w", err)
 		}
 		e.queueNPCMembershipLocked(peerSession, packets, false)
-		e.run.clearStatus(objectID, tracked.expiresAt)
+		e.run.clearAuraTargetStatus(objectID, tracked)
 		delete(e.run.targets, objectID)
 		e.run.releaseAuraInstance(tracked.instanceID)
 	}
@@ -392,11 +418,8 @@ func (e heroAuraAreaSchedule) reconcile(
 			e.run.releaseAuraInstance(instanceID)
 			return nil, fmt.Errorf("auraEntryEncode: %w", err)
 		}
-		err = e.applyStatus(peerSession.zone.NPCs(), objectID, expiresAt)
-		if err != nil {
-			e.run.releaseAuraInstance(instanceID)
-			return nil, fmt.Errorf("auraEntryApply: %w", err)
-		}
+		target := heroAuraAreaTarget{instanceID: instanceID, expiresAt: expiresAt}
+		isApplied := false
 		if e.run.isSleepingCloud {
 			// The Lua cloud retains idModifiers[target] after damage ends the
 			// sleep. A membership scan must not turn that into another entry.
@@ -404,12 +427,24 @@ func (e heroAuraAreaSchedule) reconcile(
 				e.run.sleepAttempts = make(map[uint32]struct{})
 			}
 			e.run.sleepAttempts[objectID] = struct{}{}
+			target.sleep, isApplied, err = e.applySleepingCloudTarget(objectID, instanceID, expiresAt)
+		} else if e.definition.StatusKind == sim.AbilityStatusKindSilence {
+			isApplied, err = peerSession.zone.NPCs().AdmitSilenceModifier(objectID, instanceID, now, expiresAt)
+		} else if e.definition.StatusKind == sim.AbilityStatusKindSleep {
+			isApplied, err = peerSession.zone.NPCs().AdmitSleepModifier(objectID, instanceID, now, expiresAt)
+		} else {
+			err = e.applyStatus(peerSession.zone.NPCs(), objectID, instanceID, expiresAt)
+			isApplied = err == nil && e.statusRemaining(peerSession.zone.NPCs(), objectID, now) != 0
 		}
-		if e.statusRemaining(peerSession.zone.NPCs(), objectID, now) == 0 {
+		if err != nil {
+			e.run.releaseAuraInstance(instanceID)
+			return nil, fmt.Errorf("auraEntryApply: %w", err)
+		}
+		if !isApplied {
 			e.run.releaseAuraInstance(instanceID)
 			continue
 		}
-		e.run.targets[objectID] = heroAuraAreaTarget{instanceID: instanceID, expiresAt: expiresAt}
+		e.run.targets[objectID] = target
 		e.queueNPCMembershipLocked(peerSession, packets, true)
 	}
 	if e.run.isTimeBubble {
@@ -427,15 +462,11 @@ func (e heroAuraAreaSchedule) reconcile(
 }
 
 func (e heroAuraAreaSchedule) applyStatus(
-	npc *zonenpc.Session, objectID uint32, expiresAt time.Time,
+	npc *zonenpc.Session, objectID, instanceID uint32, expiresAt time.Time,
 ) error {
 	switch e.definition.StatusKind {
-	case sim.AbilityStatusKindSilence:
-		return npc.ApplySilence(objectID, expiresAt)
-	case sim.AbilityStatusKindSleep:
-		return npc.ApplySleep(objectID, expiresAt)
 	case sim.AbilityStatusKindSlow:
-		return npc.ApplySlow(objectID, expiresAt, 0.40, 0.60)
+		return npc.ApplySlowModifier(objectID, instanceID, expiresAt, 0.40, 0.60)
 	default:
 		return errors.New("unsupported aura status")
 	}
@@ -697,8 +728,12 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 		return req.reject("aura area release unavailable")
 	}
 	cast := r.registry.reserveChannelCastLocked(peerSession, req.command.Common.ObjectID, cooldownReservation, releaseReservation)
+	var cloudAction *sim.LuaSleepingCloudAbility
 	movementPackets := make([][]byte, 0)
 	err = peerSession.stopPlayerMovement(abilityStartTime)
+	if err == nil && isSleepingCloud {
+		cloudAction, err = sim.NewLuaSleepingCloudAbility(r.program.SleepingCloud)
+	}
 	if err == nil && isSleepingCloud {
 		movementPackets, err = marshalZonePlayerStop(req.command.Common.ObjectID, peerSession.playerPosition)
 		if err == nil {
@@ -713,6 +748,9 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 		err = cast.debitLocked(&peerSession, manaCost)
 	}
 	if err != nil {
+		if cloudAction != nil {
+			cloudAction.Stop()
+		}
 		refundPacket, refundErr := cast.failLocked(&peerSession, true, cast.revision)
 		r.registry.sessions[sessionKey] = peerSession
 		if len(refundPacket) != 0 {
@@ -726,6 +764,8 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 	}
 	run := &heroAuraAreaRun{
 		cast:            cast,
+		cloudAction:     cloudAction,
+		cloudReply:      cloudActionReply{syncStamp: req.command.Common.Unknown[0], abilityID: activeAbilityID, abilityIndex: req.command.Ability.Index},
 		isSleepingCloud: isSleepingCloud, expiresAt: abilityStartTime.Add(projected.ReleaseDelay),
 		runtime: r, originalZone: peerSession.zone,
 		isTimeBubble: definition.Name == timeBubbleAbilityName,

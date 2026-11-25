@@ -6,6 +6,7 @@ import (
 	"math"
 	"reflect"
 	"slices"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/navigation"
@@ -193,6 +194,8 @@ type Snapshot struct {
 	IsInitialAggroSet               bool
 	InitialAggroAnimationFlag       uint32
 	recentDamages                   []recentDamage
+	combatIdle                      combatIdleState
+	targetTooFar                    targetTooFarState
 	Plan                            SpawnPlan
 	Origin                          game.Vec3
 	Facing                          game.Vec3
@@ -224,6 +227,7 @@ type Snapshot struct {
 	status                          status
 	corruptorCombat                 corruptorCombat
 	cinematic                       cinematicHold
+	actionRetryAt                   time.Time
 	zapCharge                       *zapChargeState
 	introduction                    introductionTimeline
 }
@@ -295,6 +299,7 @@ const (
 	ActionEventCancel
 	ActionEventReturn
 	ActionEventBossActive
+	ActionEventMovementPause
 )
 
 type ActionEvent struct {

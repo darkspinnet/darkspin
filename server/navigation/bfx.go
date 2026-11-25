@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync/atomic"
 )
 
 const (
@@ -83,9 +84,11 @@ type layer struct {
 }
 
 type Mesh struct {
-	layers    []layer
-	tunings   []LayerTuning
-	obstacles []Obstacle
+	layers           []layer
+	tunings          []LayerTuning
+	obstacles        []Obstacle
+	links            []TraversalLink
+	topologyRevision *atomic.Uint64
 }
 
 func ParseBFX(data []byte) (*Mesh, error) {

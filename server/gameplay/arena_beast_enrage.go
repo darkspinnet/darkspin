@@ -58,7 +58,7 @@ func (e *beastPetEnrageRun) activateArena() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaBeastRageScale: %w", err)
 	}
-	err = e.arenaWorld.companion.AddBuff(e.objectID,
+	err = e.arenaWorld.companion.ApplyBuffModifier(e.objectID, e.instanceID,
 		zonecompanion.Buff{DamageBuff: beastPetEnrageDamageIncrease})
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -66,8 +66,7 @@ func (e *beastPetEnrageRun) activateArena() ([][]byte, error) {
 	}
 	err = e.arenaWorld.companion.SetBodyScale(e.objectID, beastPetEnrageBodyScale)
 	if err != nil {
-		e.arenaWorld.companion.RemoveBuff(e.objectID,
-			zonecompanion.Buff{DamageBuff: beastPetEnrageDamageIncrease})
+		e.arenaWorld.companion.ClearBuffModifier(e.objectID, e.instanceID)
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaBeastRageBody: %w", err)
 	}
@@ -162,8 +161,7 @@ func (e *beastPetEnrageRun) expireArena() ([][]byte, error) {
 	member.beastPetDamageIncrease = 0
 	member.beastPetEnrage = nil
 	e.arenaWorld.companion.ClearBodyScale(e.objectID)
-	e.arenaWorld.companion.RemoveBuff(e.objectID,
-		zonecompanion.Buff{DamageBuff: beastPetEnrageDamageIncrease})
+	e.arenaWorld.companion.ClearBuffModifier(e.objectID, e.instanceID)
 	e.runtime.registry.sessions[e.sessionKey] = member
 	e.runtime.registry.mutex.Unlock()
 	e.cancel = nil

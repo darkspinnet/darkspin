@@ -171,6 +171,7 @@ type zoneEffectPresentation struct {
 	heroPassivePoisons                  map[uint32]*heroPassivePoisonRun
 	heroHitPoisons                      map[heroHitPoisonKey]*heroHitPoisonRun
 	heroTimeRavagerSlows                map[uint32]*heroTimeRavagerSlowRun
+	passiveFieldEffects                 map[passiveFieldKey]*channelEffects
 	heroEnergyVulnerabilities           map[uint32]*heroEnergyVulnerabilityRun
 	heroHealingReductions               map[heroHealingReductionKey]*heroHealingReductionRun
 	heroTaunts                          map[uint32]*heroTauntRun
@@ -196,7 +197,6 @@ type zoneEffectPresentation struct {
 	campaignNPCSinkholeFields           map[uint32]sinkholeField
 	campaignNPCNestleWanderReadiness    map[uint32]uint64
 	campaignNPCCopterRuns               map[uint32]*campaignScaldronCopterRun
-	campaignNPCSuppressionRuns          map[uint32]*campaignSuppressionRun
 	campaignNPCDopplerCloneReadiness    map[uint32]uint64
 	campaignNPCDopplerFakeObjectIDs     map[uint32]uint32
 	campaignNPCMaserCleanseReadiness    map[uint32]uint64
@@ -253,7 +253,6 @@ type zonePresentationRuntime struct {
 	cryosPoisonExpiresAt    time.Time
 	cryosPoisonSourceID     uint32
 	cryosBurnExpiresAt      time.Time
-	cryosBurnHazard         campaignLavaHazard
 	plasmaBurn              *campaignNPCModifierRun
 	plasmaBurnEffect        *plasmaBurnPresentation
 	plasmaBurnReadyAt       time.Time
@@ -263,6 +262,7 @@ type zonePresentationRuntime struct {
 	campaignUnlockPresentation              *unlockraknet.ActiveSession
 	securityTransfer                        *securityraknet.Transfer
 	teleporterHandoff                       *teleportraknet.Handoff
+	tutorialTeleporterModifier              *sim.LuaModifierRuntime
 	teleporterContact                       sim.SphereContactState
 	teleporterSample                        teleporterContactSample
 	pickupContact                           pickupContactState
@@ -318,6 +318,7 @@ type controlledHeroState struct {
 	deployedObjectID              uint32
 	heroInputLockedObjectID       uint32
 	heroInputLockedUntil          time.Time
+	campaignEntryPendingObjectID  uint32
 	maximumHitPoints              [squad.Size]float32
 	scenarioHitPointMaximums      [squad.Size]float32
 	arenaHitPointIncreases        [squad.Size]float32
@@ -330,6 +331,7 @@ type controlledHeroState struct {
 	areaBasicGeneration           uint64
 	movementContactGeneration     uint64
 	nextProjectileObjectID        uint32
+	heroControls                  map[uint32]heroControlContribution
 	enemySilenceExpiresAt         time.Time
 	enemySleepExpiresAt           time.Time
 	enemyStunExpiresAt            time.Time
@@ -351,7 +353,6 @@ type controlledHeroState struct {
 	heroKnockbackLanding          heroKnockbackLanding
 	enemyFearExpiresAt            time.Time
 	enemyFearTargetObjectID       uint32
-	campaignLavaReadyAt           time.Time
 	graviticSlowObjectID          uint32
 	sinkholeWind                  sinkholeWind
 	sinkholeMovementBuff          float32
@@ -446,7 +447,7 @@ func (s *gameplayPeerSession) isEnemySleepActive(at time.Time) bool {
 	if s == nil || at.IsZero() {
 		return false
 	}
-	if at.Before(s.enemySleepExpiresAt) {
+	if s.isHeroControlActive(heroControlSleep, at) {
 		return true
 	}
 	for _, status := range s.arenaHitStatuses {
@@ -479,8 +480,7 @@ func (s *gameplayPeerSession) isEnemyStunActive(at time.Time) bool {
 		return true
 	}
 	return s != nil && !at.IsZero() &&
-		s.deployedObjectID == s.enemyStunTargetObjectID &&
-		at.Before(s.enemyStunExpiresAt)
+		s.isHeroControlActive(heroControlStun, at)
 }
 
 func (s *gameplayPeerSession) extendEnemyRoot(
@@ -499,7 +499,7 @@ func (s *gameplayPeerSession) extendEnemyRoot(
 
 func (s *gameplayPeerSession) isEnemyRootActive(at time.Time) bool {
 	return s != nil && !at.IsZero() &&
-		((s.deployedObjectID == s.enemyRootTargetObjectID && at.Before(s.enemyRootExpiresAt)) ||
+		(s.isHeroControlActive(heroControlRoot, at) ||
 			s.isArenaHitRootActive(at))
 }
 
@@ -537,7 +537,7 @@ func (s *gameplayPeerSession) extendEnemySilence(
 }
 
 func (e gameplayPeerSession) isEnemySilenceActive(at time.Time) bool {
-	return !at.IsZero() && (at.Before(e.enemySilenceExpiresAt) || e.isArenaHitSilenceActive(at) || e.fixtureSilenceCount() > 0)
+	return !at.IsZero() && (e.isHeroControlActive(heroControlSilence, at) || e.isArenaHitSilenceActive(at) || e.fixtureSilenceCount() > 0)
 }
 
 type controlledHeroPresentation struct {
@@ -551,7 +551,7 @@ type controlledHeroPresentation struct {
 	plasmaWreathStoppedRuns      []*abilityraknet.PlasmaWreathRun
 	enrageRun                    *abilityraknet.EnrageRun
 	ghostFormRun                 *abilityraknet.GhostFormRun
-	heroModifierRun              *heroModifierRun
+	heroModifierRuns             map[heroModifierKey]*heroModifierRun
 	omniShields                  map[uint32]*omniShieldRun
 	omniShieldRegistry           *gameplaySessionRegistry
 	missileFlakRun               *missileFlakRun
@@ -946,6 +946,7 @@ func (s *gameplayPeerSession) pendingPackets() ([][]byte, uint64) {
 	// No transport acknowledgement is required when every byte in an
 	// untagged batch has expired. Never discard an attachment delivery owner.
 	s.pendingPacketBatches = pruneExpiredCinematicBatches(s.pendingPacketBatches, now)
+	s.pendingPacketBatches = s.pruneCorpseAnimationBatches(s.pendingPacketBatches)
 	packetCount := 0
 	for _, batch := range s.pendingPacketBatches {
 		packetCount += len(batch.packets)
@@ -962,7 +963,7 @@ func (s *gameplayPeerSession) pendingPackets() ([][]byte, uint64) {
 		if batch.isCampaignPresentation && (!s.dungeonSetup.IsCommitted() || s.isRejoinPending) {
 			break
 		}
-		packets = append(packets, batch.packetsAt(now)...)
+		packets = append(packets, s.retainCorpseAnimations(batch.packetsAt(now))...)
 		batchID = batch.id
 	}
 	return packets, batchID
@@ -1009,6 +1010,9 @@ func (e gameplayPeerSession) abilityRandom() (*sim.SimulatorRandom, error) {
 }
 
 func (e gameplayPeerSession) heroInputLockRemaining(at time.Time) time.Duration {
+	if e.campaignEntryPendingObjectID != 0 {
+		return max(time.Millisecond, e.heroInputLockedUntil.Sub(at))
+	}
 	if e.heroInputLockedObjectID == 0 || at.IsZero() ||
 		!at.Before(e.heroInputLockedUntil) {
 		return 0
@@ -1201,7 +1205,7 @@ func (s *gameplayPeerSession) campaignNPCTarget(
 
 func (s *gameplayPeerSession) isHeroDebuffImmune(targetObjectID uint32) bool {
 	return s != nil && targetObjectID == s.deployedObjectID &&
-		(s.isHeroArrivalProtected(time.Now()) || s.heroModifierRun.IsDebuffImmune() || s.hasOmniShieldAt(targetObjectID, time.Now()) || s.isArenaBanished(time.Now()))
+		(s.isHeroArrivalProtected(time.Now()) || s.hasHeroDebuffImmunity() || s.hasOmniShieldAt(targetObjectID, time.Now()) || s.isArenaBanished(time.Now()))
 }
 
 func (s *gameplayPeerSession) trackCampaignNPCProjectile(
@@ -1283,7 +1287,6 @@ func (s *gameplayPeerSession) stopCampaignNPCProjectiles() {
 		s.queueCampaignPackets(cleanupPackets)
 		delete(s.campaignNPCCopterRuns, objectID)
 	}
-	clear(s.campaignNPCSuppressionRuns)
 	clear(s.campaignNPCDopplerCloneReadiness)
 	clear(s.campaignNPCDopplerFakeObjectIDs)
 	clear(s.campaignNPCMaserCleanseReadiness)
@@ -1311,8 +1314,8 @@ func (s *gameplayPeerSession) stopCampaignNPCProjectiles() {
 	clear(s.warpTotemWarnings)
 	clear(s.warpTotemDischarges)
 	s.randomTeleport = randomTeleport{}
-	clear(s.campaignTwinLaserEndpointIDs)
-	clear(s.campaignArcturusStates)
+	// Boss beam ownership survives hero death so its scheduled finish can
+	// remove source effects even after the selected hero changes.
 	s.pickupPursuit = nil
 	s.interactablePursuit = nil
 	clear(s.campaignNPCRuptionNextMagmas)
@@ -1718,11 +1721,13 @@ func (s *gameplayPeerSession) resetAbilityRelease() {
 // member. The client presents those modifiers on a specific hero object even
 // though their authoritative expiry is owned by the peer session.
 func (s *gameplayPeerSession) clearEnemyHeroStatuses() {
+	s.retirePassiveFields()
 	if s == nil {
 		return
 	}
 	s.clearScenarioHeroAbilityRank()
 	s.retireArenaHitStatuses()
+	s.heroControls = nil
 	s.enemySilenceExpiresAt = time.Time{}
 	s.enemySleepExpiresAt = time.Time{}
 	s.enemyStunExpiresAt = time.Time{}
@@ -1737,8 +1742,13 @@ func (s *gameplayPeerSession) clearEnemyHeroStatuses() {
 // state that was canceled with the old connection. Zone-owned world progress,
 // squad resources, cooldowns, and the stopped authoritative pose survive.
 func (s *gameplayPeerSession) resetRetainedTransportState() {
+	s.retirePassiveFields()
 	if s == nil {
 		return
+	}
+	if s.tutorialTeleporterModifier != nil {
+		s.tutorialTeleporterModifier.Stop()
+		s.tutorialTeleporterModifier = nil
 	}
 	s.clearScenarioHeroAbilityRank()
 	s.retireArenaHitStatuses()
@@ -1774,6 +1784,7 @@ func (s *gameplayPeerSession) resetRetainedTransportState() {
 	}
 	s.pendingPacketBatches = retainedBatches
 	s.isPendingPacketOverflow = false
+	s.heroControls = nil
 	s.enemySilenceExpiresAt = time.Time{}
 	s.enemySleepExpiresAt = time.Time{}
 	s.enemyStunExpiresAt = time.Time{}
@@ -2003,6 +2014,7 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 ) *abilityraknet.MeleeRun {
 	traps := e.heroTraps
 	statusAreas := e.heroStatusAreas
+	auraAreas := e.heroAuraAreas
 	infections := e.heroInfections
 	bursts := e.heroBurstAttacks
 	beastObjectID := e.beastPetObjectID
@@ -2016,16 +2028,16 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 	if timedArea != nil && timedArea.isEffectBound {
 		retainedSlots = append(retainedSlots, timedArea.effectSlot)
 	}
-	var arborealMight *heroModifierRun
-	if e.heroModifierRun != nil && e.heroModifierRun.isArborealMight {
-		arborealMight = e.heroModifierRun
-		if arborealMight.isEffectAttached {
-			retainedSlots = append(retainedSlots, arborealMight.effectSlot)
+	modifierRuns := e.heroModifierRuns
+	for _, modifierRun := range modifierRuns {
+		if modifierRun.isEffectAttached {
+			retainedSlots = append(retainedSlots, modifierRun.effectSlot)
 		}
-		e.heroModifierRun = nil
 	}
+	e.heroModifierRuns = nil
 	e.heroTraps = nil
 	e.heroStatusAreas = nil
+	e.heroAuraAreas = nil
 	e.heroInfections = nil
 	e.heroBurstAttacks = nil
 	// Rejection is not an owner switch, death, or summon expiry. Preserve the
@@ -2037,15 +2049,14 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 	run := e.resetFailedActionAdmission(modifierInstancePool, effectPool, retainedSlots...)
 	e.heroTraps = traps
 	e.heroStatusAreas = statusAreas
+	e.heroAuraAreas = auraAreas
 	e.heroInfections = infections
 	e.heroBurstAttacks = bursts
 	e.beastPetObjectID = beastObjectID
 	e.heroSummons = summons
 	e.heroTimedArea = timedArea
 	e.ghostFormRun = ghostForm
-	if arborealMight != nil {
-		e.heroModifierRun = arborealMight
-	}
+	e.heroModifierRuns = modifierRuns
 	return run
 }
 
@@ -2137,11 +2148,11 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 		e.enrageRun = nil
 	}
 	e.retireGhostForm(modifierInstancePool)
-	if e.heroModifierRun != nil {
-		e.heroModifierRun.Cancel()
-		if e.heroModifierRun.isShadowStealth {
+	for _, modifierRun := range e.heroModifierRuns {
+		modifierRun.Cancel()
+		if modifierRun.isShadowStealth {
 			acquired, stealthPacket, err := e.setShadowRavagerStealth(
-				e.heroModifierRun.objectID, false,
+				modifierRun.objectID, false,
 			)
 			_ = acquired
 			_ = stealthPacket
@@ -2150,18 +2161,18 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 				// removes the same hero authority immediately afterward.
 			}
 		}
-		e.heroModifierRun.Remove(e)
+		modifierRun.Remove(e)
 		// Recovery retires the expiry callback, so publish its client cleanup now.
-		modifierPackets, modifierErr := e.heroModifierRun.stopPresentation(effectPool)
+		modifierPackets, modifierErr := modifierRun.stopPresentation(effectPool)
 		if modifierErr != nil {
 			log.Printf("RakNet hero modifier action reset cleanup failed user=%d: %v", e.binding.UserID, modifierErr)
 		}
 		e.queueCampaignPackets(modifierPackets)
 		if modifierInstancePool != nil {
-			_ = modifierInstancePool.Release(e.heroModifierRun.instanceID)
+			_ = modifierInstancePool.Release(modifierRun.instanceID)
 		}
-		e.heroModifierRun = nil
 	}
+	e.heroModifierRuns = nil
 	_, _ = stopMissileFlak(e, modifierInstancePool)
 	_, _ = stopPoisonNovaCooldown(e, modifierInstancePool)
 	e.rollbackPendingPlasmaWreath()
@@ -2226,6 +2237,7 @@ type gameplaySessionRegistry struct {
 	chronoFreezes            map[chronoFreezeKey]*chronoFreezeStep
 	timeBubbles              map[*heroAuraAreaRun]struct{}
 	auraRuns                 map[*heroAuraAreaRun]struct{}
+	fireVulnerabilities      map[*zone.Zone]map[uint32]*heroEnergyVulnerabilityRun
 	projectileRetirements    map[*abilityraknet.ProjectileRun]*campaignProjectileRetirement
 	projectileFreezes        map[*abilityraknet.ProjectileRun]map[uint32]*hostileProjectileFreezeStep
 	chargeRuns               map[*heroChargeRun]struct{}
@@ -4730,7 +4742,7 @@ func (r gameplaySwitchRuntime) handle(
 	var preparedSagePoll *sagePassivePoll
 	var interruptedBasic *abilityraknet.MeleeRun
 	var stoppedGhostRun *abilityraknet.GhostFormRun
-	var stoppedHeroModifierRun *heroModifierRun
+	var stoppedHeroModifierRuns []*heroModifierRun
 	stoppedSagePackets := [][]byte(nil)
 	stoppedWreathPackets := make([][]byte, 0)
 	stoppedGhostPackets := make([][]byte, 0)
@@ -4763,6 +4775,17 @@ func (r gameplaySwitchRuntime) handle(
 	if peerSession.zone == nil || peerSession.zone.NPCs() == nil {
 		r.registry.mutex.Unlock()
 		return nil, errors.New("switchCampaignNPCSession: unavailable")
+	}
+	deploymentPosition, deploymentErr := peerSession.campaignDeploymentPosition(command.Value, switchStartTime)
+	if deploymentErr != nil {
+		if isVoluntarySwitch {
+			r.registry.mutex.Unlock()
+			return r.reject(command, commandSession, switchStartTime, fmt.Sprintf("deployment navigation unavailable: %v", deploymentErr))
+		}
+		// A missing safe placement must not prevent selecting a living hero.
+		// Retain death selection's existing placement and record the blocker.
+		deploymentPosition = peerSession.playerPosition
+		r.logger.Printf("RakNet deployment navigation fallback remote=%s: %v", packet.Address, deploymentErr)
 	}
 	targetCharacter, err = peerSession.normalizeCampaignCharacterResources(
 		command.Value,
@@ -4852,6 +4875,9 @@ func (r gameplaySwitchRuntime) handle(
 	if err != nil {
 		r.logger.Printf("RakNet player movement cleanup omitted during switch remote=%s: %v", packet.Address, err)
 	}
+	if deploymentErr != nil {
+		deploymentPosition = peerSession.playerPosition
+	}
 	arrivalTimestamp := packet.SourceTime
 	if isVoluntarySwitch {
 		arrivalTimestamp += uint64(campaignCreatureWarpOutDelay / time.Millisecond)
@@ -4864,7 +4890,7 @@ func (r gameplaySwitchRuntime) handle(
 		peerSession.playerPosition, command.Common.Orientation,
 		arrivalTimestamp,
 		packet.SourceTime+uint64(campaignCreatureSwapCooldown/time.Millisecond),
-		isDeathSelection || isVoluntarySwitch,
+		isDeathSelection || isVoluntarySwitch, deploymentPosition,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -4913,8 +4939,8 @@ func (r gameplaySwitchRuntime) handle(
 		}
 		peerSession.ghostFormRun = nil
 	}
-	if peerSession.heroModifierRun != nil {
-		stoppedHeroModifierRun = peerSession.heroModifierRun
+	for _, stoppedHeroModifierRun := range peerSession.heroModifierRuns {
+		stoppedHeroModifierRuns = append(stoppedHeroModifierRuns, stoppedHeroModifierRun)
 		stoppedHeroModifierRun.Remove(&peerSession)
 		if stoppedHeroModifierRun.isShadowStealth {
 			acquired, stealthPacket, stealthErr := peerSession.setShadowRavagerStealth(
@@ -4963,8 +4989,8 @@ func (r gameplaySwitchRuntime) handle(
 				r.logger.Printf("RakNet hero scale cleanup omitted during switch remote=%s: %v", packet.Address, attributeErr)
 			}
 		}
-		peerSession.heroModifierRun = nil
 	}
+	peerSession.heroModifierRuns = nil
 	flakPacket, flakErr := stopMissileFlak(&peerSession, r.modifierPool)
 	if flakErr == nil && flakPacket != nil {
 		stoppedFlakPackets = append(stoppedFlakPackets, flakPacket)
@@ -5005,6 +5031,14 @@ func (r gameplaySwitchRuntime) handle(
 	peerSession.deployedCreatureIndex = command.Value
 	peerSession.passiveStationarySince[command.Value] = switchPresentationTime
 	peerSession.deployedObjectID = targetObjectID
+	if peerSession.playerMotion != nil {
+		peerSession.playerMotion.SetActorNavigation(peerSession.zone.Navigation(), peerSession.deployedCampaignNavigationRadius(), targetObjectID, uint8(peerSession.binding.Mode))
+	}
+	err = peerSession.placeTeleportedPlayer(switchStartTime, deploymentPosition)
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("switchPlacement: %w", err)
+	}
 	initialShieldPackets, err := peerSession.activateTCShield(command.Value, switchPresentationTime, r.effectPool, r.registry)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -5107,7 +5141,7 @@ func (r gameplaySwitchRuntime) handle(
 		stoppedGhostRun.Cancel()
 		_ = r.modifierPool.Release(stoppedGhostRun.InstanceID())
 	}
-	if stoppedHeroModifierRun != nil {
+	for _, stoppedHeroModifierRun := range stoppedHeroModifierRuns {
 		stoppedHeroModifierRun.Cancel()
 		_ = r.modifierPool.Release(stoppedHeroModifierRun.instanceID)
 	}

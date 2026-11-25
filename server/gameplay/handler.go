@@ -38,8 +38,6 @@ import (
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zoneencounter "github.com/darkspinnet/darkspin/server/zone/encounter"
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
-	heroraknet "github.com/darkspinnet/darkspin/server/zone/hero/raknet103"
-	zonehorde "github.com/darkspinnet/darkspin/server/zone/horde"
 	zoneinteract "github.com/darkspinnet/darkspin/server/zone/interact"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
@@ -388,6 +386,10 @@ func (r gameplayActionRuntime) handleCommand(
 		}()
 	}
 	disposition := &gameplayActionDisposition{}
+	var cloudListeners []*heroAuraAreaRun
+	if isSessionFound && command.Common.Type == raknet.ActionUseCharacterAbility && command.Ability != nil {
+		cloudListeners = r.registry.sleepingCloudListeners(packet.Address.String(), peerSession.generation)
+	}
 	ctx = context.WithValue(ctx, gameplayActionDispositionKey{}, disposition)
 	response, err := r.dispatch(ctx, packet, command)
 	duration := r.now().Sub(startedAt)
@@ -446,6 +448,17 @@ func (r gameplayActionRuntime) handleCommand(
 		return protected, err
 	}
 	scheduleSet.seal()
+	if len(cloudListeners) != 0 && command.Common.Type == raknet.ActionUseCharacterAbility && !disposition.isBasicRetained {
+		abilityID, isAccepted := acceptedAbilityID(protected)
+		if isAccepted && abilityID != 0 {
+			commit := cloudActionCommit{registry: r.registry, sessionKey: packet.Address.String(),
+				generation: peerSession.generation, runs: cloudListeners, now: r.now(), timestamp: packet.SourceTime}
+			commitErr := packet.AfterResponseCommit(commit.commit)
+			if commitErr != nil {
+				return protected, fmt.Errorf("cloudActionCommit: %w", commitErr)
+			}
+		}
+	}
 	if command.Ability != nil && !disposition.isBasicRetained &&
 		hasActionResponseForSync(protected, command.Common.Unknown[0]) {
 		// A newly admitted attack or special replaces the queued basic intent.
@@ -859,6 +872,7 @@ type NavigationSource interface {
 }
 
 type gameplayHandlerDependencies struct {
+	accountTransportSource *gameplayAccountTransportSource
 	allyAlertRuleSource    AllyAlertRuleSource
 	hordePolicySource      HordePolicySource
 	campaignSetup          *game.CampaignSetup
@@ -883,6 +897,8 @@ type gameplayHandlerDependencies struct {
 }
 
 type Lifecycle struct {
+	accountTransportSource accountTransportSource
+	partDetailConverter    game.PartDetailConverter
 	cleanup                func()
 	disconnectAddress      func(string, uint64)
 	discardGame            func(uint32)
@@ -949,32 +965,43 @@ func (r gameplayCrystalRuntime) handle(packet raknet.Packet) ([][]byte, error) {
 			return r.result(command, false)
 		}
 		isMoved := inventory.Move(int(command.SourceSlot), int(command.DestinationSlot), slotCount)
-		if isMoved {
-			err = peerSession.zone.SetCrystalInventory(
-				peerSession.binding.UserID, peerSession.generation, inventory,
-			)
-			if err == nil {
-				peerSession.setCrystalInventory(inventory)
-				r.registry.sessions[sessionKey] = peerSession
-			}
-		}
-		r.registry.mutex.Unlock()
-		if err != nil {
-			return nil, fmt.Errorf("crystalMoveStore: %w", err)
-		}
 		if !isMoved {
+			r.registry.mutex.Unlock()
 			return r.result(command, false)
 		}
-		resultPackets, resultErr := r.acceptedResult(command, peerSession)
+		staged, stageErr := peerSession.prepareCrystalInventory(inventory)
+		if stageErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("crystalMoveStage: %w", stageErr)
+		}
+		resultPackets, statePackets, resultErr := r.prepareResult(command, staged)
 		if resultErr != nil {
+			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("crystalMoveResult: %w", resultErr)
 		}
-		return resultPackets, nil
+		err = peerSession.commitCrystalInventory(staged, 0)
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("crystalMoveStore: %w", err)
+		}
+		r.registry.sessions[sessionKey] = peerSession
+		r.registry.mutex.Unlock()
+		return r.acceptedResult(peerSession, resultPackets, statePackets), nil
 	}
 	slot, isRemoved := inventory.Remove(int(command.SourceSlot), slotCount)
 	if !isRemoved || slot.NounName == "" {
 		r.registry.mutex.Unlock()
 		return r.result(command, false)
+	}
+	staged, stageErr := peerSession.prepareCrystalInventory(inventory)
+	if stageErr != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("crystalDropStage: %w", stageErr)
+	}
+	resultPackets, statePackets, resultErr := r.prepareResult(command, staged)
+	if resultErr != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("crystalDropResult: %w", resultErr)
 	}
 	source := sim.Position{
 		X: peerSession.playerPosition.X, Y: peerSession.playerPosition.Y,
@@ -1024,9 +1051,7 @@ func (r gameplayCrystalRuntime) handle(packet raknet.Packet) ([][]byte, error) {
 		})
 	}
 	if err == nil {
-		err = peerSession.zone.SetCrystalInventory(
-			peerSession.binding.UserID, peerSession.generation, inventory,
-		)
+		err = peerSession.commitCrystalInventory(staged, 0)
 	}
 	if err != nil {
 		peerSession.zone.Pickups().Remove(objectID)
@@ -1035,7 +1060,6 @@ func (r gameplayCrystalRuntime) handle(packet raknet.Packet) ([][]byte, error) {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("crystalDropCommit: %w", err)
 	}
-	peerSession.setCrystalInventory(inventory)
 	for candidateKey, candidate := range r.registry.sessions {
 		if candidateKey == sessionKey || candidate.zone != peerSession.zone {
 			continue
@@ -1052,24 +1076,26 @@ func (r gameplayCrystalRuntime) handle(packet raknet.Packet) ([][]byte, error) {
 	}
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
-	resultPackets, err := r.acceptedResult(command, peerSession)
-	if err != nil {
-		return nil, fmt.Errorf("crystalDropResult: %w", err)
-	}
-	return append(resultPackets, worldPackets...), nil
+	return append(r.acceptedResult(peerSession, resultPackets, statePackets), worldPackets...), nil
 }
 
-func (r gameplayCrystalRuntime) acceptedResult(
+func (r gameplayCrystalRuntime) prepareResult(
 	command raknet.CrystalDragCommand, peerSession gameplayPeerSession,
-) ([][]byte, error) {
+) ([][]byte, [][]byte, error) {
 	statePackets, err := marshalGameplayCrystalState(peerSession)
 	if err != nil {
-		return nil, fmt.Errorf("crystalBonusMarshal: %w", err)
+		return nil, nil, fmt.Errorf("crystalBonusMarshal: %w", err)
 	}
 	resultPackets, err := r.result(command, true)
 	if err != nil {
-		return nil, fmt.Errorf("crystalAcceptedResult: %w", err)
+		return nil, nil, fmt.Errorf("crystalAcceptedResult: %w", err)
 	}
+	return resultPackets, statePackets, nil
+}
+
+func (r gameplayCrystalRuntime) acceptedResult(
+	peerSession gameplayPeerSession, resultPackets [][]byte, statePackets [][]byte,
+) [][]byte {
 	// Teammates track this player's catalyst records too. The drag response
 	// itself is local, but inventory and link updates include the player slot.
 	r.registry.mutex.Lock()
@@ -1090,7 +1116,7 @@ func (r gameplayCrystalRuntime) acceptedResult(
 	r.registry.mutex.Unlock()
 	// A drag response changes the HUD, but does not refresh the player-owned
 	// crystal records used by subsequent tooltips and drag admission.
-	return append(resultPackets, statePackets...), nil
+	return append(resultPackets, statePackets...)
 }
 
 func (r gameplayCrystalRuntime) result(
@@ -1218,8 +1244,10 @@ func NewHandler(
 	checkpoint zonecheckpoint.Repository,
 	allyAlertRuleSources ...AllyAlertRuleSource,
 ) (raknet.Handler, Lifecycle) {
-	lifecycle := Lifecycle{}
+	transportSource := &gameplayAccountTransportSource{}
+	lifecycle := Lifecycle{accountTransportSource: transportSource}
 	dependency := defaultGameplayHandlerDependencies()
+	dependency.accountTransportSource = transportSource
 	dependency.allyAlertRuleSource = fixedAllyAlertRules{rules: zonenpc.DefaultAllyAlertRules()}
 	if len(allyAlertRuleSources) > 0 {
 		dependency.allyAlertRuleSource = allyAlertRuleSources[0]
@@ -1274,6 +1302,7 @@ func NewHandler(
 	handler := newGameplayHandlerWithDependencies(
 		gameplayJoin, progression, program, logger, dependency,
 	)
+	lifecycle.partDetailConverter = newPartDetailConverter(transportSource.registry, progression)
 	if lifecycle.cleanup == nil {
 		lifecycle.cleanup = func() {}
 	}
@@ -1303,6 +1332,9 @@ func newGameplayHandlerWithDependencies(
 	sessionRegistry := newGameplaySessionRegistry(
 		dependency.zoneTimer, dependency.now, logger,
 	)
+	if dependency.accountTransportSource != nil {
+		dependency.accountTransportSource.registry = sessionRegistry
+	}
 	sessionRegistry.playerStatRecorder = statsRecorder
 	sessionRegistry.companionAggroRanges = program.NonPlayerAggroRanges
 	sessionRegistry.configureScenarioAbility(program)
@@ -2631,16 +2663,6 @@ func (r gameplayPendingRuntime) pollWorld(
 	isRejoinNeeded := isFound && peerSession.isRejoinPending &&
 		peerSession.stage.IsDungeon() && peerSession.zone != nil
 	r.registry.mutex.RUnlock()
-	if isFound && peerSession.zone != nil {
-		questErr := r.publishQuestCrystals(ctx, packet, packet.Address.String())
-		if questErr != nil && r.logger != nil {
-			r.logger.Printf("Quest crystal delivery retained: %v", questErr)
-		}
-		recoveryErr := r.damage.npc.recoverCorruptorSecondAggro(packet.Address.String(), peerSession.generation, packet.SourceTime)
-		if recoveryErr != nil {
-			return nil, fmt.Errorf("corruptorRecovery: %w", recoveryErr)
-		}
-	}
 	if isRejoinNeeded {
 		packets, err := r.setup.publishRejoin(packet, peerSession)
 		if err != nil {
@@ -2678,6 +2700,26 @@ func (r gameplayPendingRuntime) pollWorld(
 			return nil, fmt.Errorf("recoveryBaseline: %w", err)
 		}
 		return packets, nil
+	}
+	// Operator commands must not wait behind continuously queued world
+	// publications or a failing NPC recovery loop. Rejoin and baseline delivery
+	// above still establish the objects needed by their responses first.
+	commandPackets, isCommandHandled, commandErr := r.consumePlayerEventCommand(ctx, packet)
+	if commandErr != nil {
+		return nil, fmt.Errorf("eventPoll: %w", commandErr)
+	}
+	if isCommandHandled {
+		return commandPackets, nil
+	}
+	if isFound && peerSession.zone != nil {
+		questErr := r.publishQuestCrystals(ctx, packet, packet.Address.String())
+		if questErr != nil && r.logger != nil {
+			r.logger.Printf("Quest crystal delivery retained: %v", questErr)
+		}
+		recoveryErr := r.damage.npc.recoverCorruptorSecondAggro(packet.Address.String(), peerSession.generation, packet.SourceTime)
+		if recoveryErr != nil {
+			return nil, fmt.Errorf("corruptorRecovery: %w", recoveryErr)
+		}
 	}
 	err := r.action.overdrive.reconcilePresentation(packet)
 	if err != nil {
@@ -2822,6 +2864,11 @@ func (r gameplayPendingRuntime) pollWorld(
 				return nil, fmt.Errorf("swiftPoll: %w", swiftErr)
 			}
 			rootHazardPackets = append(rootHazardPackets, swiftPackets...)
+			passiveFieldErr := r.pollPassiveFieldsLocked(packet.Address.String(), &peerSession)
+			if passiveFieldErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("passiveFieldPoll: %w", passiveFieldErr)
+			}
 		}
 		r.registry.sessions[packet.Address.String()] = peerSession
 	}
@@ -2862,6 +2909,15 @@ func (r gameplayPendingRuntime) pollWorld(
 		r.registry.sessions[packet.Address.String()] = peerSession
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("mutationFeedbackPending: %w", mutationFeedbackErr)
+	}
+	if isFound && peerSession.zone != nil {
+		r.registry.sessions[packet.Address.String()] = peerSession
+		traversalErr := r.registry.queueNavigationTeleportsLocked(peerSession.zone)
+		if traversalErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("navigationTraversal: %w", traversalErr)
+		}
+		peerSession = r.registry.sessions[packet.Address.String()]
 	}
 	pendingBatchCount := len(peerSession.pendingPacketBatches)
 	queuedPackets, pendingPacketBatchID := peerSession.pendingPacketsForResponse(packet.ResponseID())
@@ -3008,6 +3064,20 @@ func (r gameplayPendingRuntime) pollWorld(
 	if len(projected) != 0 {
 		return projected, nil
 	}
+	combatIdlePackets, err := r.pollCombatIdleBehaviors(packet)
+	if err != nil {
+		return nil, fmt.Errorf("combatIdlePoll: %w", err)
+	}
+	if len(combatIdlePackets) != 0 {
+		return combatIdlePackets, nil
+	}
+	passivePackets, err := r.pollPassiveBehaviors(packet)
+	if err != nil {
+		return nil, fmt.Errorf("passivePoll: %w", err)
+	}
+	if len(passivePackets) != 0 {
+		return passivePackets, nil
+	}
 	recoveryPackets, err := r.recoverNPCs(packet)
 	if err != nil {
 		return nil, fmt.Errorf("npcRecovery: %w", err)
@@ -3032,13 +3102,6 @@ func (r gameplayPendingRuntime) pollWorld(
 	responses, _, err = r.consumePlayerResourceCommand(ctx, packet)
 	if err != nil {
 		return nil, fmt.Errorf("resourcePoll: %w", err)
-	}
-	if len(responses) != 0 {
-		return responses, nil
-	}
-	responses, _, err = r.consumePlayerEventCommand(ctx, packet)
-	if err != nil {
-		return nil, fmt.Errorf("eventPoll: %w", err)
 	}
 	if len(responses) != 0 {
 		return responses, nil
@@ -3132,7 +3195,7 @@ func (r gameplayPendingRuntime) recoverIdleNPCActions(
 	plans := make([]zonenpc.SpawnPlan, 0)
 	for _, npc := range peerSession.zone.NPCs().SelectedSnapshots(zonenpc.SelectIdleAction) {
 		if npc.IsDefeated || !npc.IsScenarioAIEnabled() || npc.Plan.IsFixture || npc.TargetObjectID == 0 ||
-			npc.IsActionStarted || zonenpc.IsAgentHealingChild(npc.Plan) {
+			npc.IsActionStarted || zonenpc.IsAgentHealingChild(npc.Plan) || zonenpc.IsArcturusTurret(npc.Plan) {
 			continue
 		}
 		_, isTargetFound := peerSession.campaignNPCTarget(
@@ -3187,7 +3250,7 @@ func (r gameplayPendingRuntime) recoverNPCs(
 	plans := make([]zonenpc.SpawnPlan, 0)
 	for _, npc := range peerSession.zone.NPCs().Snapshots() {
 		if npc.IsDefeated || npc.Plan.IsFixture || npc.TargetObjectID == 0 ||
-			npc.IsActionStarted || zonenpc.IsAgentHealingChild(npc.Plan) {
+			npc.IsActionStarted || zonenpc.IsAgentHealingChild(npc.Plan) || zonenpc.IsArcturusTurret(npc.Plan) {
 			continue
 		}
 		plans = append(plans, npc.Plan)
@@ -4162,6 +4225,15 @@ func marshalCampaignProjection(event zoneprojection.Event) ([][]byte, error) {
 				return nil, fmt.Errorf("npcActionReturn: %w", err)
 			}
 			return packets, nil
+		case zonenpc.ActionEventMovementPause:
+			packets, err := npcraknet.MovementPause(
+				action.Plan.ObjectID, action.Plan.SourcePosition,
+				action.Plan.SourceFacing,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("npcActionPause: %w", err)
+			}
+			return packets, nil
 		default:
 			return nil, fmt.Errorf("npcActionKind: %d", action.Kind)
 		}
@@ -4534,9 +4606,15 @@ func stopGameplayPeerRuntime(
 		effectPool.ReleaseObject(peerSession.deployedObjectID)
 	}
 	peerSession.stopHardenedMantle()
+	peerSession.retirePassiveFields()
 	peerSession.stopCampaignPlasmaModifiers(modifierInstancePool)
 	peerSession.stopCampaignNPCModifiers(modifierInstancePool)
 	peerSession.stopCampaignNPCProjectiles()
+	clear(peerSession.campaignTwinLaserEndpointIDs)
+	arcturusErr := peerSession.retireArcturusControllers()
+	if arcturusErr != nil {
+		log.Printf("RakNet Arcturus controller cleanup failed user=%d: %v", peerSession.binding.UserID, arcturusErr)
+	}
 	for _, instanceID := range peerSession.passiveModifierInstance {
 		if instanceID != 0 && modifierInstancePool != nil {
 			_ = modifierInstancePool.Release(instanceID)
@@ -4547,6 +4625,10 @@ func stopGameplayPeerRuntime(
 	}
 	if peerSession.teleporterHandoff != nil {
 		peerSession.teleporterHandoff.Stop()
+	}
+	if peerSession.tutorialTeleporterModifier != nil {
+		peerSession.tutorialTeleporterModifier.Stop()
+		peerSession.tutorialTeleporterModifier = nil
 	}
 	if peerSession.securityTransfer != nil {
 		peerSession.securityTransfer.Stop()
@@ -4662,11 +4744,11 @@ func stopGameplayPeerRuntime(
 			_ = modifierInstancePool.Release(peerSession.ghostFormRun.InstanceID())
 		}
 	}
-	if peerSession.heroModifierRun != nil {
-		peerSession.heroModifierRun.Cancel()
-		if peerSession.heroModifierRun.isShadowStealth {
+	for _, modifierRun := range peerSession.heroModifierRuns {
+		modifierRun.Cancel()
+		if modifierRun.isShadowStealth {
 			acquired, stealthPacket, err := peerSession.setShadowRavagerStealth(
-				peerSession.heroModifierRun.objectID, false,
+				modifierRun.objectID, false,
 			)
 			_ = acquired
 			_ = stealthPacket
@@ -4675,11 +4757,13 @@ func stopGameplayPeerRuntime(
 				// peer immediately retires the same zone hero authority.
 			}
 		}
-		peerSession.heroModifierRun.Remove(peerSession)
+		modifierRun.Remove(peerSession)
+		modifierRun.releaseEffect(effectPool)
 		if modifierInstancePool != nil {
-			_ = modifierInstancePool.Release(peerSession.heroModifierRun.instanceID)
+			_ = modifierInstancePool.Release(modifierRun.instanceID)
 		}
 	}
+	peerSession.heroModifierRuns = nil
 	_, _ = stopMissileFlak(peerSession, modifierInstancePool)
 	_, _ = stopPoisonNovaCooldown(peerSession, modifierInstancePool)
 	fieldMedicHeroPackets, fieldMedicHeroErr := peerSession.stopFieldMedicHeroBuffs(modifierInstancePool)
@@ -4734,6 +4818,7 @@ func resetGameplayPeerRuntime(
 	peerSession.isGraviticEffectAttached = false
 	peerSession.graviticProjectiles = nil
 	peerSession.isGraviticSpeedPresented = false
+	peerSession.heroControls = nil
 	peerSession.enemySilenceExpiresAt = time.Time{}
 	peerSession.enemySleepExpiresAt = time.Time{}
 	peerSession.enemyStunExpiresAt = time.Time{}
@@ -5109,6 +5194,10 @@ func (r gameplaySetupRuntime) publishCampaign(
 			entryPosition = raknet.Vector3(restoredBot.Position)
 		}
 	}
+	err = r.initializeCampaignBotRole(&peerSession)
+	if err != nil {
+		return nil, false, fmt.Errorf("campaignBotRole: %w", err)
+	}
 	playerMotion, err := zoneaction.NewMotion(toSimPosition(entryPosition), r.now())
 	if err != nil {
 		return nil, false, fmt.Errorf("pingCampaignMovement: %w", err)
@@ -5242,6 +5331,11 @@ func (r gameplaySetupRuntime) publishCampaign(
 		return nil, false, fmt.Errorf("pingCampaignMembers: %w", err)
 	}
 	response = append(response, memberPackets...)
+	pendingEntryPackets, err := r.pendingCampaignEntryPackets(peerSession.zone)
+	if err != nil {
+		return nil, false, fmt.Errorf("pingCampaignEntryHide: %w", err)
+	}
+	response = append(response, pendingEntryPackets...)
 	arrivalPacketIndex := len(response)
 	response = append(response, fieldMedicPackets...)
 	isCheckpointBaseline := peerSession.zone.IsRestored() ||
@@ -5282,6 +5376,12 @@ func (r gameplaySetupRuntime) publishCampaign(
 			return nil, false, fmt.Errorf("pingCampaignObjectiveMarshal[%d]: %w", index, marshalErr)
 		}
 		response = append(response, objectivePacket)
+	}
+	if peerSession.binding.Mode == game.ModeTutorial {
+		err = peerSession.prepareTutorialTeleporterModifier(r.program.BossTeleporter)
+		if err != nil {
+			return nil, false, fmt.Errorf("tutorialModifier: %w", err)
+		}
 	}
 	tutorialTeleporterPackets, err := peerSession.tutorialTeleporterInitialState()
 	if err != nil {
@@ -5385,12 +5485,8 @@ func (r gameplaySetupRuntime) publishCampaign(
 	arrivalTimestamp := advanceHeroArrivalTimestamp(
 		packet.SourceTime, publishStartedAt, r.now(),
 	)
-	beamPackets, err := heroraknet.BeamIn(
-		peerSession.deployedObjectID,
-		campaignCharacterEntry(
-			peerSession.binding.Creatures[peerSession.deployedCreatureIndex],
-		),
-		zonePosition(entryPosition), arrivalTimestamp,
+	beamPackets, err := r.campaignEntryPackets(
+		packet, peerSession, setupEpoch, zonePosition(entryPosition), arrivalTimestamp,
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("pingCampaignBeamIn: %w", err)
@@ -5896,43 +5992,18 @@ func (p campaignPreparation) loadDirector(
 	if err != nil {
 		return game.CampaignDirector{}, fmt.Errorf("directorLoad: %w", err)
 	}
-	director.BossSpawnRules = game.DefaultBossSpawnRules()
-	director.EnemyPopulationRules = game.DefaultEnemyPopulationRules()
-	populationRuleSource, isPopulationRuleSource := p.spawnRuleSource.(interface {
-		EnemyPopulationRules() game.EnemyPopulationRules
-	})
-	if isPopulationRuleSource {
-		director.EnemyPopulationRules = populationRuleSource.EnemyPopulationRules()
+	director.ZoneRules, err = p.zoneRules(ctx, binding)
+	if err != nil {
+		return game.CampaignDirector{}, fmt.Errorf("directorZoneRules: %w", err)
 	}
-	spawnRuleSource, isSpawnRuleSource := p.spawnRuleSource.(interface{ BossSpawnRules() game.BossSpawnRules })
-	if isSpawnRuleSource {
-		director.BossSpawnRules = spawnRuleSource.BossSpawnRules()
-	}
-	missionRuleSource, isMissionRuleSource := p.spawnRuleSource.(interface {
-		SpawnRulesSnapshot() (game.EnemyPopulationRules, game.BossSpawnRules)
-	})
-	if isMissionRuleSource {
-		director.EnemyPopulationRules, director.BossSpawnRules = missionRuleSource.SpawnRulesSnapshot()
-	}
-	if p.checkpoint != nil {
-		snapshot, isFound, loadErr := p.checkpoint.Load(ctx, uint64(binding.GameID))
-		if loadErr != nil {
-			return game.CampaignDirector{}, fmt.Errorf("directorRuleCheckpoint: %w", loadErr)
-		}
-		if isFound && snapshot.IsSpawnRuleSnapshotSet {
-			validateErr := zonecheckpoint.Validate(snapshot, uint64(binding.GameID), binding.Level, binding.Difficulty, binding.UserID)
-			if validateErr == nil {
-				director.EnemyPopulationRules = snapshot.EnemyPopulationRules.Resolved()
-				director.BossSpawnRules = snapshot.BossSpawnRules.Resolved()
-			}
-		}
-	}
+	director.BossSpawnRules = director.ZoneRules.BossSpawning
+	director.EnemyPopulationRules = director.ZoneRules.EnemyPopulation
 	director, err = game.ApplyPopulationRules(director)
 	if err != nil {
 		return game.CampaignDirector{}, fmt.Errorf("directorPopulation: %w", err)
 	}
 	if p.logger != nil {
-		p.logger.Printf("Dark Spin NPC policy game=%d stage=%d party=%d population=%+v boss=%+v agents=%d leader_result=%s", binding.GameID, binding.Difficulty, binding.CombatParticipantCount, director.EnemyPopulationRules, director.BossSpawnRules, len(director.OrdinaryAgentEntries), zoneboss.LeaderPolicyResult(director))
+		p.logger.Printf("Dark Spin NPC policy game=%d stage=%d party=%d rule_key=%q target=%d population=%+v boss=%+v agents=%d leader_result=%s", binding.GameID, binding.Difficulty, binding.CombatParticipantCount, director.ZoneRules.Key, director.PopulationTarget(), director.EnemyPopulationRules, director.BossSpawnRules, len(director.OrdinaryAgentEntries), zoneboss.LeaderPolicyResult(director))
 	}
 	director, err = p.selectInitialMapLayout(director, binding)
 	if err != nil {
@@ -6253,7 +6324,7 @@ func (p campaignPreparation) initialize(
 			return fmt.Errorf("statusTutorialHordePlans: %w", markerErr)
 		}
 	}
-	fixtureMarkers, sceneryDeleteObjectIDs, fixtureErr := director.MapDestructibles()
+	fixtureMarkers, takeoverObjectIDs, removalOnlyObjectIDs, fixtureErr := director.MapDestructibles()
 	if fixtureErr != nil {
 		return fmt.Errorf("statusMapFixtures: %w", fixtureErr)
 	}
@@ -6267,14 +6338,15 @@ func (p campaignPreparation) initialize(
 		}
 	}
 	fixtureErr = p.auditSelectedFixtureTakeover(
-		director, fixtureMarkers, sceneryDeleteObjectIDs, fixturePlans,
+		director, fixtureMarkers, takeoverObjectIDs, fixturePlans,
 	)
 	if fixtureErr != nil {
 		return fmt.Errorf("statusFixtureAudit: %w", fixtureErr)
 	}
 	peerSession.recordScenarioFixtureTakeover(
-		director, fixtureMarkers, sceneryDeleteObjectIDs, fixturePlans,
+		director, fixtureMarkers, takeoverObjectIDs, fixturePlans,
 	)
+	sceneryDeleteObjectIDs := append(takeoverObjectIDs, removalOnlyObjectIDs...)
 	if binding.Mode == game.ModeChain {
 		barrierSets, barrierErr := director.HordeBarriers()
 		if barrierErr != nil {
@@ -6369,7 +6441,7 @@ func (p campaignPreparation) initialize(
 	if capsuleRandomErr != nil {
 		return fmt.Errorf("statusChainCapsuleRandom: %w", capsuleRandomErr)
 	}
-	hordePolicy := p.hordePolicy()
+	hordePolicy := campaignZoneHordePolicy(director.ZoneRules.MutationAgent)
 	hordePolicyErr := hordePolicy.Validate()
 	if hordePolicyErr != nil {
 		return fmt.Errorf("hordePolicy: %w", hordePolicyErr)
@@ -6428,7 +6500,7 @@ func (p campaignPreparation) initialize(
 			Director:                directorSession,
 			Script:                  scriptRegistry,
 			Encounter:               zoneencounter.NewStageSession(),
-			Horde:                   zonehorde.NewCampaignSessionWithPolicy(binding.ChainProgression, hordePolicy),
+			Horde:                   campaignZoneHordeSession(binding, director.ZoneRules, restoreSnapshot),
 			Boss:                    zoneboss.NewSession(director.BossSpawnRules),
 			Death:                   zonedeath.NewSession(),
 			Objective:               objectiveSession,

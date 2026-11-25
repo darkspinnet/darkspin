@@ -74,5 +74,15 @@ func marshalNPCAttack(
 		npcSession.PayAdditionalKitCooldown(plan.SourceObjectID, plan.Profile.AbilityName,
 			timestamp+uint64((plan.Profile.HitDelay+plan.Profile.Cooldown)/time.Millisecond))
 	}
+	idlePackets, isWindowSet, idleErr := prepareNPCIdleWindow(npcSession, snapshot,
+		time.Now(), plan.Profile.ReleaseDelay, plan.Profile.Cooldown)
+	if idleErr != nil {
+		return nil, fmt.Errorf("npcIdleRetire: %w", idleErr)
+	}
+	if !isWindowSet {
+		// A replacement action won admission while this packet was prepared.
+		return nil, nil
+	}
+	packets = append(idlePackets, packets...)
 	return packets, nil
 }

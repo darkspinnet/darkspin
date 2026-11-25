@@ -123,7 +123,6 @@ func (e fireTempestStep) arenaSpawn() ([][]byte, error) {
 		generation: e.run.generation, ownerObjectID: e.run.ownerObjectID,
 		objectID: e.run.petObjectID, kind: arenaCombatPetFire,
 		startedAt: e.run.runtime.now(), attackAbility: e.run.runtime.program.FireTempestPetBasic,
-		petDamage:    member.binding.Creatures[member.deployedCreatureIndex].PetDamage + fireTempestPetPrimaryStatOffset,
 		deletePacket: deletePacket, isPublished: true,
 	}
 	if e.run.arenaWorld.combatPets == nil {
@@ -305,7 +304,7 @@ func (e fireTempestStep) arenaEnragePulse() ([][]byte, error) {
 			e.run.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("arenaFireEnrageScale: %w", err)
 		}
-		err = e.run.arenaWorld.companion.AddBuff(pet.objectID,
+		err = e.run.arenaWorld.companion.ApplyBuffModifier(pet.objectID, e.run.enrageInstanceID,
 			zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff})
 		if err != nil {
 			e.run.runtime.registry.mutex.Unlock()
@@ -313,16 +312,14 @@ func (e fireTempestStep) arenaEnragePulse() ([][]byte, error) {
 		}
 		err = e.run.arenaWorld.companion.SetBodyScale(pet.objectID, fireTempestEnrageBodyScale)
 		if err != nil {
-			e.run.arenaWorld.companion.RemoveBuff(pet.objectID,
-				zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff})
+			e.run.arenaWorld.companion.ClearBuffModifier(pet.objectID, e.run.enrageInstanceID)
 			e.run.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("arenaFireEnrageBody: %w", err)
 		}
 		e.run.isEnrageBuffApplied = true
 	}
 	creature := e.creature
-	creature.DamageProfile.PrimaryAttribute = creature.PetDamage
-	creature.DamageProfile.IsPrimaryAttributeFound = true
+	creature.DamageProfile = fireTempestPetDamageProfile(creature)
 	creature.DamageProfile.DamageBuff += fireTempestEnrageDamageBuff
 	definition := e.definition
 	definition.Kind = sim.AbilityKindAuraArea
@@ -379,8 +376,7 @@ func (e fireTempestStep) arenaEnrageExpire() ([][]byte, error) {
 	e.run.isEnrageBuffApplied = false
 	if isApplied && pet != nil {
 		e.run.arenaWorld.companion.ClearBodyScale(pet.objectID)
-		e.run.arenaWorld.companion.RemoveBuff(pet.objectID,
-			zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff})
+		e.run.arenaWorld.companion.ClearBuffModifier(pet.objectID, instanceID)
 	}
 	e.run.runtime.registry.mutex.Unlock()
 	modErr := e.run.runtime.modifierPool.Release(instanceID)

@@ -131,11 +131,11 @@ func (e *gameplaySessionRegistry) retireChargeModifiersLocked(run *heroChargeRun
 		}
 		switch run.assetName {
 		case "BeastCharge":
-			run.npc.ClearStun(modifier.targetObjectID, modifier.expiresAt)
+			run.npc.ClearStunModifier(modifier.targetObjectID, modifier.instanceID)
 		case "EntanglingRush":
-			run.npc.ClearRoot(modifier.targetObjectID, modifier.expiresAt)
+			run.npc.ClearRootModifier(modifier.targetObjectID, modifier.instanceID)
 		case "PhantomCharge":
-			run.npc.ClearSilence(modifier.targetObjectID, modifier.expiresAt)
+			run.npc.ClearSilenceModifier(modifier.targetObjectID, modifier.instanceID)
 		case "BioRandom2":
 			// The short taunt presentation does not own ForceTargetInRadius.
 			// Only the caster buff owns this exact reduction deadline.

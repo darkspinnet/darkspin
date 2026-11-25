@@ -168,6 +168,7 @@ func resumeCheckpoint(
 		Difficulty: snapshot.Difficulty, Slot: member.Slot,
 		ExpectedPlayerCount: uint16(len(snapshot.Members)),
 		IsReplayRandomized:  snapshot.IsReplayRandomized,
+		IsNoReplay:          snapshot.IsNoReplay,
 		CampaignBots:        resumeCampaignBots(snapshot.CampaignBots),
 	}, true, nil
 }

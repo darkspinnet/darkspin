@@ -7,14 +7,15 @@ import (
 	"sync/atomic"
 )
 
-// Obstacle is an upright static collision box in game coordinates. The
+// Obstacle is an upright collision box in game coordinates. The
 // selected layout owns these boxes; the cached terrain mesh remains immutable.
 type Obstacle struct {
-	MarkerID uint32
-	Position Vec3
-	Minimum  Vec3
-	Maximum  Vec3
-	Yaw      float32
+	MarkerID            uint32
+	Position            Vec3
+	Minimum             Vec3
+	Maximum             Vec3
+	Yaw                 float32
+	IsInitiallyDisabled bool
 	// Selected Nocturna wall proxies permit bounded projection to free faces.
 	// Other obstacles retain strict rejection of an obstructed projection.
 	IsBoundaryProjectionEnabled bool
@@ -35,24 +36,83 @@ func (e *Mesh) WithObstacles(obstacles []Obstacle) (*Mesh, error) {
 		}
 	}
 	result := *e
+	if result.topologyRevision == nil {
+		result.topologyRevision = new(atomic.Uint64)
+	}
 	result.obstacles = append([]Obstacle(nil), obstacles...)
 	for index := range result.obstacles {
 		result.obstacles[index].isDisabled = new(atomic.Bool)
+		result.obstacles[index].isDisabled.Store(result.obstacles[index].IsInitiallyDisabled)
 	}
 	return &result, nil
+}
+
+// WithAdditionalObstacles preserves existing obstacle lifetime while attaching
+// another feature's initially configured colliders to this zone's mesh.
+func (e *Mesh) WithAdditionalObstacles(obstacles []Obstacle) (*Mesh, error) {
+	result, err := e.WithObstacles(obstacles)
+	if err != nil {
+		return nil, fmt.Errorf("additionalBounds: %w", err)
+	}
+	result.obstacles = append(append([]Obstacle(nil), e.obstacles...), result.obstacles...)
+	return result, nil
+}
+
+// SetObstacleEnabled changes a selected collider for every actor sharing this
+// mesh. Horde barriers use it for both activation and encounter completion.
+func (e *Mesh) SetObstacleEnabled(markerID uint32, isEnabled bool) {
+	if e == nil || markerID == 0 {
+		return
+	}
+	for _, obstacle := range e.obstacles {
+		if obstacle.MarkerID == markerID && obstacle.isDisabled != nil &&
+			obstacle.isDisabled.Swap(!isEnabled) != !isEnabled {
+			e.topologyRevision.Add(1)
+		}
+	}
 }
 
 // DisableObstacle retires a placed collider without changing the shared terrain
 // mesh. All actors using this layout observe the same collision lifetime.
 func (e *Mesh) DisableObstacle(markerID uint32) {
-	if e == nil || markerID == 0 {
-		return
+	e.SetObstacleEnabled(markerID, false)
+}
+
+// IsSegmentClear rechecks a sampled segment of an already admitted terrain
+// path against the current collision overlay. It is not a terrain/path query.
+func (e *Mesh) IsSegmentClear(start, end Vec3, planLayer uint8) bool {
+	if e == nil || !isFinite(start) || !isFinite(end) {
+		return false
 	}
+	if int(planLayer) >= len(e.layers) {
+		return false
+	}
+	layer := e.layers[planLayer]
 	for _, obstacle := range e.obstacles {
-		if obstacle.MarkerID == markerID && obstacle.isDisabled != nil {
-			obstacle.isDisabled.Store(true)
+		if obstacle.intersects(start, end, layer.info.Radius, layer.info.Height) {
+			return false
 		}
 	}
+	return true
+}
+
+// FirstObstacleContact returns the earliest fraction of a segment inside an
+// enabled authored blocker, without the clearance used for walking actors.
+func (e *Mesh) FirstObstacleContact(start, end Vec3) (float32, bool) {
+	if e == nil || !isFinite(start) || !isFinite(end) {
+		return 0, false
+	}
+	nearest := float32(1)
+	for _, obstacle := range e.obstacles {
+		entry, isHit := obstacle.segmentEntry(start, end, 0, 0)
+		if isHit && entry < nearest {
+			nearest = entry
+			if nearest == 0 {
+				break
+			}
+		}
+	}
+	return nearest, nearest < 1
 }
 
 func (e Obstacle) local(point Vec3) Vec3 {
@@ -63,8 +123,13 @@ func (e Obstacle) local(point Vec3) Vec3 {
 }
 
 func (e Obstacle) intersects(start Vec3, end Vec3, radius float32, height float32) bool {
+	_, isHit := e.segmentEntry(start, end, radius, height)
+	return isHit
+}
+
+func (e Obstacle) segmentEntry(start, end Vec3, radius, height float32) (float32, bool) {
 	if e.isDisabled != nil && e.isDisabled.Load() {
-		return false
+		return 0, false
 	}
 	start, end = e.local(start), e.local(end)
 	minimums := [3]float32{e.Minimum.X - radius, e.Minimum.Y - radius, e.Minimum.Z - height}
@@ -76,7 +141,7 @@ func (e Obstacle) intersects(start Vec3, end Vec3, radius float32, height float3
 		delta := ends[axis] - starts[axis]
 		if math.Abs(float64(delta)) < 0.000001 {
 			if starts[axis] <= minimums[axis] || starts[axis] >= maximums[axis] {
-				return false
+				return 0, false
 			}
 			continue
 		}
@@ -87,20 +152,25 @@ func (e Obstacle) intersects(start Vec3, end Vec3, radius float32, height float3
 		}
 		entry, exit = max(entry, first), min(exit, last)
 		if entry >= exit {
-			return false
+			return 0, false
 		}
 	}
-	return entry < exit
+	return entry, true
 }
 
 func (e *Mesh) isObstructed(point Vec3, planLayer uint8) bool {
+	return e.firstObstruction(point, planLayer) != nil
+}
+
+func (e *Mesh) firstObstruction(point Vec3, planLayer uint8) *Obstacle {
 	info := e.layers[planLayer].info
-	for _, obstacle := range e.obstacles {
+	for index := range e.obstacles {
+		obstacle := &e.obstacles[index]
 		if obstacle.intersects(point, point, info.Radius, info.Height) {
-			return true
+			return obstacle
 		}
 	}
-	return false
+	return nil
 }
 
 func (e *Mesh) pathObstacles(path Path, planLayer uint8) []int {
@@ -118,22 +188,23 @@ func (e *Mesh) pathObstacles(path Path, planLayer uint8) []int {
 }
 
 type obstacleRoute struct {
-	mesh              *Mesh
-	options           PathOptions
-	nodes             []Vec3
-	paths             map[[2]int]Path
-	areEdgesExamined  map[[2]int]bool
-	obstacleIndexes   map[int]bool
-	heights           map[int]float32
-	areObstaclesAdded map[int]bool
-	areContactsAdded  map[int]bool
+	mesh                   *Mesh
+	options                PathOptions
+	nodes                  []Vec3
+	paths                  map[[2]int]Path
+	areEdgesExamined       map[[2]int]bool
+	obstacleIndexes        map[int]bool
+	heights                map[int]float32
+	areObstaclesAdded      map[int]bool
+	areContactsAdded       map[int]bool
+	remainingObstacleEdges *int
 }
 
 // CreatePath retains terrain corridors, then searches around authored collision
 // boxes when needed. Every candidate edge is itself a terrain path and is
-// checked against every box. This compatibility overlay does not claim native
-// topology splitting or dynamic-door lifecycle parity.
-func (e *Mesh) CreatePath(start Vec3, goal Vec3, options PathOptions) (Path, error) {
+// checked against every enabled box. The overlay does not claim native
+// topology splitting.
+func (e *Mesh) walkingPath(start Vec3, goal Vec3, options PathOptions, remainingObstacleEdges *int) (Path, error) {
 	path, err := e.terrainPath(start, goal, options)
 	if err != nil {
 		return Path{}, fmt.Errorf("pathTerrain: %w", err)
@@ -142,13 +213,17 @@ func (e *Mesh) CreatePath(start Vec3, goal Vec3, options PathOptions) (Path, err
 	if len(indexes) == 0 {
 		return path, nil
 	}
+	if remainingObstacleEdges != nil && *remainingObstacleEdges == 0 {
+		return Path{}, errors.New("navigation obstacle search budget exhausted")
+	}
 	options.ComponentID = path.Start.ComponentID
 	options.IsComponentConstrained = true
 	route := obstacleRoute{
 		mesh: e, options: options, nodes: []Vec3{path.Start.Position, path.Goal.Position},
 		paths: make(map[[2]int]Path), areEdgesExamined: make(map[[2]int]bool),
 		obstacleIndexes: make(map[int]bool), heights: make(map[int]float32), areObstaclesAdded: make(map[int]bool),
-		areContactsAdded: make(map[int]bool),
+		areContactsAdded:       make(map[int]bool),
+		remainingObstacleEdges: remainingObstacleEdges,
 	}
 	route.recordObstacles(path, indexes)
 	for pass := 0; pass < len(e.obstacles); pass++ {
@@ -159,6 +234,9 @@ func (e *Mesh) CreatePath(start Vec3, goal Vec3, options PathOptions) (Path, err
 		if isFound {
 			result.Start, result.Goal = path.Start, path.Goal
 			return result, nil
+		}
+		if remainingObstacleEdges != nil && *remainingObstacleEdges == 0 {
+			return Path{}, errors.New("navigation obstacle search budget exhausted")
 		}
 	}
 	// A box corner can lie outside a narrow authored walkway. Search nearby
@@ -173,6 +251,9 @@ func (e *Mesh) CreatePath(start Vec3, goal Vec3, options PathOptions) (Path, err
 		if isFound {
 			result.Start, result.Goal = path.Start, path.Goal
 			return result, nil
+		}
+		if remainingObstacleEdges != nil && *remainingObstacleEdges == 0 {
+			return Path{}, errors.New("navigation obstacle search budget exhausted")
 		}
 	}
 	return Path{}, errors.New("navigation obstacle route unavailable")
@@ -281,6 +362,12 @@ func (e *obstacleRoute) edge(source int, target int) (Path, bool) {
 	if e.areEdgesExamined[key] {
 		path, isFound := e.paths[key]
 		return path, isFound
+	}
+	if e.remainingObstacleEdges != nil {
+		if *e.remainingObstacleEdges == 0 {
+			return Path{}, false
+		}
+		(*e.remainingObstacleEdges)--
 	}
 	e.areEdgesExamined[key] = true
 	path, err := e.mesh.terrainPath(e.nodes[source], e.nodes[target], e.options)

@@ -29,6 +29,7 @@ type debugLuaClient struct {
 	debugScope      *lua.LUserData
 	abilityScope    *lua.LUserData
 	pvpScope        *lua.LUserData
+	chatScope       *lua.LUserData
 }
 
 func debugLuaClientIndex(state *lua.LState) int {
@@ -39,6 +40,11 @@ func debugLuaClientIndex(state *lua.LState) int {
 		return 0
 	}
 	switch state.CheckString(2) {
+	case "Chat":
+		if client.chatScope == nil {
+			client.chatScope = debugLuaClientScope(state, client, "chat")
+		}
+		state.Push(client.chatScope)
 	case "PVP":
 		if client.pvpScope == nil {
 			client.pvpScope = debugLuaClientScope(state, client, "pvp")

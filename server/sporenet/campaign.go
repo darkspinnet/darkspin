@@ -18,10 +18,15 @@ var ErrCampaignCashOutBonusChanged = errors.New("campaign cashout bonus changed"
 // CampaignExperience is one durable successful-zone XP receipt. ResultID is
 // scoped by user and makes replay after a process restart an idempotent read.
 type CampaignExperience struct {
-	ResultID     uint64
-	Amount       uint32
-	CumulativeXP uint32
-	Level        uint32
+	// Completion metadata is attached only by a new authoritative campaign win.
+	// SQL consumes it on first durable save; legacy receipts remain unclassified.
+	CampaignNumber      uint32
+	CampaignLevelNumber uint32
+	CompletedAtUnix     int64
+	ResultID            uint64
+	Amount              uint32
+	CumulativeXP        uint32
+	Level               uint32
 }
 
 // CampaignCashOutReward is the bounded server-selected reward ledger committed
@@ -111,10 +116,37 @@ func (m *UserManager) UnlockOverdrive(ctx context.Context, userID int64) (bool, 
 func (m *UserManager) GrantCampaignExperience(
 	ctx context.Context, userID int64, resultID uint64, amount uint32,
 ) (TutorialExperience, error) {
+	experience, err := m.grantCampaignExperience(ctx, userID, resultID, amount, 0)
+	if err != nil {
+		return TutorialExperience{}, fmt.Errorf("experienceGrant: %w", err)
+	}
+	return experience, nil
+}
+
+// CampaignCompletionExperience is a successful zone's immutable reward command.
+// LevelIndex is the selected one-based campaign threat, regardless of randomized map.
+type CampaignCompletionExperience struct {
+	ResultID   uint64
+	Amount     uint32
+	LevelIndex uint32
+}
+
+func (e *UserManager) GrantCampaignCompletionExperience(ctx context.Context, userID int64, req CampaignCompletionExperience) (TutorialExperience, error) {
+	if req.LevelIndex == 0 {
+		return TutorialExperience{}, errors.New("invalid campaign level index")
+	}
+	experience, err := e.grantCampaignExperience(ctx, userID, req.ResultID, req.Amount, req.LevelIndex)
+	if err != nil {
+		return TutorialExperience{}, fmt.Errorf("completionGrant: %w", err)
+	}
+	return experience, nil
+}
+
+func (e *UserManager) grantCampaignExperience(ctx context.Context, userID int64, resultID uint64, amount uint32, levelIndex uint32) (TutorialExperience, error) {
 	if resultID == 0 {
 		return TutorialExperience{}, errors.New("campaign experience result invalid")
 	}
-	user := m.UserByID(userID)
+	user := e.UserByID(userID)
 	if user == nil {
 		return TutorialExperience{}, ErrInvalidUser
 	}
@@ -151,7 +183,13 @@ func (m *UserManager) GrantCampaignExperience(
 	experience := TutorialExperience{
 		CumulativeXP: user.Account.XP, Level: user.Account.Level,
 	}
+	var campaignNumber, campaignLevelNumber uint32
+	if levelIndex != 0 {
+		campaignNumber = (levelIndex-1)/4 + 1
+		campaignLevelNumber = (levelIndex-1)%4 + 1
+	}
 	user.CampaignExperiences = append(user.CampaignExperiences, CampaignExperience{
+		CampaignNumber: campaignNumber, CampaignLevelNumber: campaignLevelNumber, CompletedAtUnix: time.Now().UTC().Unix(),
 		ResultID: resultID, Amount: amount,
 		CumulativeXP: experience.CumulativeXP, Level: experience.Level,
 	})
@@ -160,7 +198,7 @@ func (m *UserManager) GrantCampaignExperience(
 		levelMilestoneEvents(previousAccount.Level, experience.Level)...,
 	)
 	previousEvents := eventAppend.previousEvents
-	err := m.repository.Save(ctx, user.Record())
+	err := e.repository.Save(ctx, user.Record())
 	if err != nil {
 		user.mu.Lock()
 		user.Account = previousAccount

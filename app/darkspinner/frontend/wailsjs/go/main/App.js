@@ -18,8 +18,20 @@ export function CancelPatch() {
   return window['go']['main']['App']['CancelPatch']();
 }
 
+export function CancelRemoteControlMaintenance(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CancelRemoteControlMaintenance'](arg1, arg2, arg3);
+}
+
+export function ChangeRemoteControlPassword(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ChangeRemoteControlPassword'](arg1, arg2, arg3, arg4);
+}
+
 export function Check() {
   return window['go']['main']['App']['Check']();
+}
+
+export function CheckRemoteControlUpdate(arg1, arg2) {
+  return window['go']['main']['App']['CheckRemoteControlUpdate'](arg1, arg2);
 }
 
 export function CheckRemoteServers(arg1) {
@@ -28,6 +40,10 @@ export function CheckRemoteServers(arg1) {
 
 export function CloseDetachedGameInstances() {
   return window['go']['main']['App']['CloseDetachedGameInstances']();
+}
+
+export function CloseRemoteControlPanel() {
+  return window['go']['main']['App']['CloseRemoteControlPanel']();
 }
 
 export function CloseRunningGame() {
@@ -54,6 +70,18 @@ export function DeleteProfile(arg1) {
   return window['go']['main']['App']['DeleteProfile'](arg1);
 }
 
+export function DeleteRemoteConnection(arg1, arg2) {
+  return window['go']['main']['App']['DeleteRemoteConnection'](arg1, arg2);
+}
+
+export function DeleteRemoteControlAccount(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DeleteRemoteControlAccount'](arg1, arg2, arg3);
+}
+
+export function DeleteRemoteControlDiagnostic(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['DeleteRemoteControlDiagnostic'](arg1, arg2, arg3, arg4);
+}
+
 export function DeleteRemoteProfile(arg1, arg2, arg3) {
   return window['go']['main']['App']['DeleteRemoteProfile'](arg1, arg2, arg3);
 }
@@ -64,6 +92,14 @@ export function DetectModSporePath() {
 
 export function DiscardInterruptedMission(arg1) {
   return window['go']['main']['App']['DiscardInterruptedMission'](arg1);
+}
+
+export function DownloadRemoteControlDiagnostic(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['DownloadRemoteControlDiagnostic'](arg1, arg2, arg3, arg4);
+}
+
+export function FilterRemoteControlHistory(arg1, arg2, arg3) {
+  return window['go']['main']['App']['FilterRemoteControlHistory'](arg1, arg2, arg3);
 }
 
 export function GetInstallationStatus() {
@@ -90,12 +126,20 @@ export function GetLuaConsole() {
   return window['go']['main']['App']['GetLuaConsole']();
 }
 
+export function GetMatchmakingConfiguration() {
+  return window['go']['main']['App']['GetMatchmakingConfiguration']();
+}
+
 export function GetModConfiguration() {
   return window['go']['main']['App']['GetModConfiguration']();
 }
 
 export function GetModPortrait(arg1) {
   return window['go']['main']['App']['GetModPortrait'](arg1);
+}
+
+export function GetMyControlActivity(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetMyControlActivity'](arg1, arg2, arg3);
 }
 
 export function GetProfileAvatars() {
@@ -106,6 +150,42 @@ export function GetProfiles() {
   return window['go']['main']['App']['GetProfiles']();
 }
 
+export function GetRemoteControlActivity(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetRemoteControlActivity'](arg1, arg2, arg3);
+}
+
+export function GetRemoteControlAnnouncements(arg1, arg2) {
+  return window['go']['main']['App']['GetRemoteControlAnnouncements'](arg1, arg2);
+}
+
+export function GetRemoteControlCapacity(arg1, arg2) {
+  return window['go']['main']['App']['GetRemoteControlCapacity'](arg1, arg2);
+}
+
+export function GetRemoteControlHealth(arg1, arg2) {
+  return window['go']['main']['App']['GetRemoteControlHealth'](arg1, arg2);
+}
+
+export function GetRemoteControlIdentity(arg1, arg2) {
+  return window['go']['main']['App']['GetRemoteControlIdentity'](arg1, arg2);
+}
+
+export function GetRemoteControlMaintenance(arg1, arg2) {
+  return window['go']['main']['App']['GetRemoteControlMaintenance'](arg1, arg2);
+}
+
+export function GetRemoteControlMatchmaking(arg1, arg2) {
+  return window['go']['main']['App']['GetRemoteControlMatchmaking'](arg1, arg2);
+}
+
+export function GetRemoteControlPanel(arg1, arg2) {
+  return window['go']['main']['App']['GetRemoteControlPanel'](arg1, arg2);
+}
+
+export function GetRemoteControlUpdate(arg1, arg2) {
+  return window['go']['main']['App']['GetRemoteControlUpdate'](arg1, arg2);
+}
+
 export function GetRemoteProfiles() {
   return window['go']['main']['App']['GetRemoteProfiles']();
 }
@@ -114,16 +194,20 @@ export function GetServerConfiguration() {
   return window['go']['main']['App']['GetServerConfiguration']();
 }
 
-export function GetServerRulesConfiguration() {
-  return window['go']['main']['App']['GetServerRulesConfiguration']();
-}
-
 export function GetSquadSnapshot(arg1) {
   return window['go']['main']['App']['GetSquadSnapshot'](arg1);
 }
 
 export function GetStatus() {
   return window['go']['main']['App']['GetStatus']();
+}
+
+export function GetUserControlActivity(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['GetUserControlActivity'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function GetUserControlLoginHistory(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['GetUserControlLoginHistory'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
 export function GetWineRunnerConfiguration() {
@@ -150,12 +234,44 @@ export function LaunchRemoteProfile(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['LaunchRemoteProfile'](arg1, arg2, arg3, arg4);
 }
 
+export function ListRemoteControlDiagnostics(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ListRemoteControlDiagnostics'](arg1, arg2, arg3, arg4);
+}
+
+export function ListRemoteControlHistory(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ListRemoteControlHistory'](arg1, arg2, arg3, arg4);
+}
+
+export function ListRemoteControlSessions(arg1, arg2) {
+  return window['go']['main']['App']['ListRemoteControlSessions'](arg1, arg2);
+}
+
+export function ListRemoteControlUsers(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ListRemoteControlUsers'](arg1, arg2, arg3, arg4);
+}
+
 export function LoginRemoteProfile(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['LoginRemoteProfile'](arg1, arg2, arg3, arg4);
 }
 
+export function ModerateRemoteControlUser(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['ModerateRemoteControlUser'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function OpenControlDiagnosticFolder(arg1) {
+  return window['go']['main']['App']['OpenControlDiagnosticFolder'](arg1);
+}
+
 export function OpenFirewallSettings() {
   return window['go']['main']['App']['OpenFirewallSettings']();
+}
+
+export function OpenLocalControlPanel(arg1) {
+  return window['go']['main']['App']['OpenLocalControlPanel'](arg1);
+}
+
+export function OpenRemoteControlPanel(arg1, arg2, arg3) {
+  return window['go']['main']['App']['OpenRemoteControlPanel'](arg1, arg2, arg3);
 }
 
 export function OpenReportFolder() {
@@ -194,6 +310,10 @@ export function RemoveLauncherIntegration(arg1) {
   return window['go']['main']['App']['RemoveLauncherIntegration'](arg1);
 }
 
+export function RenameRemoteControlAccount(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RenameRemoteControlAccount'](arg1, arg2, arg3, arg4);
+}
+
 export function RepairLauncherIntegration(arg1) {
   return window['go']['main']['App']['RepairLauncherIntegration'](arg1);
 }
@@ -208,6 +328,14 @@ export function ResetProfileDisplay(arg1, arg2) {
 
 export function RestartLauncher() {
   return window['go']['main']['App']['RestartLauncher']();
+}
+
+export function RevokeOtherRemoteControlSessions(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RevokeOtherRemoteControlSessions'](arg1, arg2, arg3);
+}
+
+export function RevokeRemoteControlSession(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RevokeRemoteControlSession'](arg1, arg2, arg3, arg4);
 }
 
 export function RunLuaScript(arg1) {
@@ -226,6 +354,10 @@ export function ScanWineRunners() {
   return window['go']['main']['App']['ScanWineRunners']();
 }
 
+export function SendRemoteControlAnnouncement(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SendRemoteControlAnnouncement'](arg1, arg2, arg3);
+}
+
 export function SendReport(arg1) {
   return window['go']['main']['App']['SendReport'](arg1);
 }
@@ -236,6 +368,10 @@ export function SetAutoPatch(arg1) {
 
 export function SetAutoPlay(arg1) {
   return window['go']['main']['App']['SetAutoPlay'](arg1);
+}
+
+export function SetElevatedLaunchAllowed(arg1) {
+  return window['go']['main']['App']['SetElevatedLaunchAllowed'](arg1);
 }
 
 export function SetIdentity(arg1) {
@@ -250,20 +386,40 @@ export function SetLocalServicesRequired(arg1) {
   return window['go']['main']['App']['SetLocalServicesRequired'](arg1);
 }
 
+export function SetMatchmakingConfiguration(arg1) {
+  return window['go']['main']['App']['SetMatchmakingConfiguration'](arg1);
+}
+
 export function SetModSporePath(arg1) {
   return window['go']['main']['App']['SetModSporePath'](arg1);
 }
 
-export function SetServerConfiguration(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['SetServerConfiguration'](arg1, arg2, arg3, arg4);
+export function SetRemoteControlCapacity(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetRemoteControlCapacity'](arg1, arg2, arg3);
+}
+
+export function SetRemoteControlIdentity(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetRemoteControlIdentity'](arg1, arg2, arg3);
+}
+
+export function SetRemoteControlMatchmaking(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetRemoteControlMatchmaking'](arg1, arg2, arg3);
+}
+
+export function SetRemoteControlPassword(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SetRemoteControlPassword'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function SetRemoteControlUserAccess(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['SetRemoteControlUserAccess'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
+export function SetServerConfiguration(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetServerConfiguration'](arg1, arg2, arg3);
 }
 
 export function SetServerPort(arg1) {
   return window['go']['main']['App']['SetServerPort'](arg1);
-}
-
-export function SetServerRulesConfiguration(arg1) {
-  return window['go']['main']['App']['SetServerRulesConfiguration'](arg1);
 }
 
 export function SetServerSetup(arg1) {
@@ -290,8 +446,16 @@ export function StartDetachedGameInstance(arg1) {
   return window['go']['main']['App']['StartDetachedGameInstance'](arg1);
 }
 
+export function StartRemoteControlMaintenance(arg1, arg2, arg3) {
+  return window['go']['main']['App']['StartRemoteControlMaintenance'](arg1, arg2, arg3);
+}
+
 export function StopLuaScript() {
   return window['go']['main']['App']['StopLuaScript']();
+}
+
+export function TimeoutRemoteControlUser(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['TimeoutRemoteControlUser'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function UninstallDarkspinner() {

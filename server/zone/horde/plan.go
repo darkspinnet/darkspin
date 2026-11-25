@@ -127,6 +127,9 @@ func PlanWaveWithPolicy(
 		authoredPositions = append(authoredPositions, listener.Position)
 		authoredRotations = append(authoredRotations, listener.Rotation)
 	}
+	if len(policy.FixedWaves) != 0 {
+		return planFixedWave(director, publication, firstObjectID, waveOrdinal, authoredPositions, authoredRotations, policy)
+	}
 	seed := gameID
 	if director.IsInitialLayoutSelected {
 		// Stable across co-op admission, retries and checkpoint restoration.
@@ -155,7 +158,9 @@ func PlanWaveWithPolicy(
 		Budget: budget, Stage: stage, Section: section,
 		Multiplier: director.CompositionTuning.GroupChallengeMultiplier,
 		Minions:    minions, Specials: specials, Sections: sections, Random: random,
-		PolicySeed: seed ^ publication.TriggerMarkerID ^ uint32(waveOrdinal)*0x484f5244,
+		PolicySeed:              seed ^ publication.TriggerMarkerID ^ uint32(waveOrdinal)*0x484f5244,
+		LieutenantChancePercent: policy.LieutenantChancePercent,
+		LieutenantLimitPerWave:  policy.LieutenantLimitPerWave,
 	})
 	if err != nil {
 		return nil, firstObjectID, fmt.Errorf("hordeWaveGroup: %w", err)
@@ -184,24 +189,7 @@ func PlanWaveWithPolicy(
 			NPCProfile:    entry.NPCProfile,
 		})
 	}
-	if policy.IsMutationAgentEnabled && waveOrdinal == policy.MutationAgentWaveOrdinal {
-		profile, isFound := director.NPCProfilesByNoun[strings.ToLower(zonenpc.MutationAgentNounName)]
-		if !isFound || !profile.IsKnown {
-			return nil, firstObjectID, errors.New("mutation agent profile unavailable")
-		}
-		if firstObjectID+uint32(actorCount) >= zoneobject.ProjectileIDStart {
-			return nil, firstObjectID, errors.New("mutation agent object ID exhausted")
-		}
-		plans = append(plans, zonenpc.SpawnPlan{
-			ObjectID: firstObjectID + uint32(actorCount), NounName: zonenpc.MutationAgentNounName,
-			Position: positions[0], LocusID: publication.TriggerMarkerID,
-			Kind: sim.DirectorLocusHorde, MarkerSetName: publication.MarkerSetName,
-			NPCProfile: profile, ActionProfile: zonenpc.MutationAgentActionProfile(), IsActionKnown: true,
-			Introduction: zonenpc.SpawnIntroductionFloorWarp,
-		})
-		actorCount++
-	}
-	return plans, firstObjectID + uint32(actorCount), nil
+	return appendFinalAgent(director, publication, firstObjectID, waveOrdinal, plans, policy)
 }
 
 // Existing wave policy supplies a count hint, not a recovered native budget.

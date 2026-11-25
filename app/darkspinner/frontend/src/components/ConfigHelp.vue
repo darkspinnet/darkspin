@@ -12,7 +12,7 @@ defineProps({ text: { type: String, required: true } })
       </TooltipTrigger>
       <TooltipPortal>
         <TooltipContent class="config-help-content" side="top" :side-offset="8" :collision-padding="12">
-          {{ $t(text) }}
+          <slot>{{ $t(text) }}</slot>
           <TooltipArrow class="config-help-arrow" :width="10" :height="5" />
         </TooltipContent>
       </TooltipPortal>
@@ -28,4 +28,6 @@ defineProps({ text: { type: String, required: true } })
  * Target its unique class without this component's scoped DOM attribute. */
 :global(.config-help-content) { z-index: 150; width: max-content; max-width: min(300px, calc(100vw - 24px), var(--reka-tooltip-content-available-width)); padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--popover, #18181b); color: var(--popover-foreground, #fafafa); box-shadow: 0 6px 20px #0006; font-size: 12px; font-weight: 400; line-height: 1.5; letter-spacing: normal; text-align: left; white-space: normal; overflow-wrap: anywhere; }
 :global(.config-help-arrow) { fill: var(--popover, #18181b); }
+:global(.config-help-content p + p) { margin-top: 8px; }
+:global(.config-help-content) { max-height: min(70vh, var(--reka-tooltip-content-available-height)); overflow-y: auto; }
 </style>

@@ -18,9 +18,9 @@ func isMutationAbilityBlocked(actor Snapshot, at time.Time) bool {
 	if isStatusBlockedByShield(actor) {
 		return false
 	}
-	return at.Before(actor.status.stunExpiresAt) || at.Before(actor.status.sleepExpiresAt) ||
-		at.Before(actor.status.banishExpiresAt) || at.Before(actor.status.intangibleExpiresAt) ||
-		at.Before(actor.status.silenceExpiresAt)
+	return at.Before(actor.status.stunEnd()) || at.Before(actor.status.sleepEnd()) ||
+		at.Before(actor.status.banishEnd()) || at.Before(actor.status.intangibleExpiresAt) ||
+		at.Before(actor.status.silenceEnd())
 }
 
 func beginMutationPassive(actor *Snapshot, at time.Time) {
@@ -68,7 +68,7 @@ func (e *Session) mutationBeamTarget(actor Snapshot, at time.Time) (Snapshot, bo
 	target, isFound := e.npcs[beam.TargetObjectID]
 	return target, isFound && target.IsPublished && !target.IsDefeated && target.HitPoint > 0 &&
 		target.Mutation.Generation == beam.TargetGeneration && target.Faction == beam.Faction &&
-		!at.Before(target.status.intangibleExpiresAt) && !at.Before(target.status.banishExpiresAt) &&
+		!at.Before(target.status.intangibleExpiresAt) && !at.Before(target.status.banishEnd()) &&
 		!at.Before(target.cinematic.intangibleUntil)
 }
 
@@ -77,7 +77,8 @@ func stopMutationBeam(actor *Snapshot, at time.Time) bool {
 		return true
 	}
 	isAccepted := appendMutationEvent(actor, MutationEvent{Kind: MutationEventBeamStop, At: at,
-		TargetObjectID: actor.Mutation.Beam.TargetObjectID, TargetGeneration: actor.Mutation.Beam.TargetGeneration})
+		TargetObjectID: actor.Mutation.Beam.TargetObjectID, TargetGeneration: actor.Mutation.Beam.TargetGeneration,
+		IsBeamModelActive: actor.Mutation.Beam.IsModelActive})
 	if !isAccepted {
 		return false
 	}
@@ -141,6 +142,13 @@ func (e *Session) advanceMutationBeam(actor *Snapshot, req MutationAdvanceReques
 	if isMutationAbilityBlocked(*actor, req.At) {
 		stopMutationBeam(actor, req.At)
 		return
+	}
+	if !beam.IsModelActive && !req.At.Before(beam.StartedAt.Add(500*time.Millisecond)) {
+		isAccepted := appendMutationEvent(actor, MutationEvent{Kind: MutationEventBeamModel, At: req.At})
+		if !isAccepted {
+			return
+		}
+		beam.IsModelActive = true
 	}
 	if !beam.IsChannelActive {
 		if req.At.Before(beam.ChannelAt) {

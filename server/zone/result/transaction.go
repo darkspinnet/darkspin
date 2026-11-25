@@ -43,6 +43,7 @@ type Snapshot struct {
 	ContinueSquadID        uint32
 	NextLevel              string
 	IsNextReplayRandomized bool
+	IsNextNoReplay         bool
 	IsTerminal             bool
 	EnemyNouns             [6]uint32
 	MedalCounts            [4]MedalCount

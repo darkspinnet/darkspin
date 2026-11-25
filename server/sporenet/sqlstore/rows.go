@@ -95,6 +95,7 @@ type userAssociationRow struct {
 }
 
 type userStatRow struct {
+	DNAEarned          uint64  `db:"dna_earned"`
 	UserID             int64   `db:"user_id"`
 	PVEPlayTimeSecond  uint64  `db:"pve_play_time_second"`
 	PVEMinionKill      uint64  `db:"pve_minion_kill"`
@@ -127,6 +128,7 @@ func userStatRowFromRecord(record sporenet.UserRecord) userStatRow {
 
 func userStatRowFromStats(userID int64, stat sporenet.PlayerStats) userStatRow {
 	return userStatRow{
+		DNAEarned:         stat.DNAEarned,
 		UserID:            userID,
 		PVEPlayTimeSecond: stat.PVEPlayTimeSecond,
 		PVEMinionKill:     stat.PVEMinionKill, PVESpecialKill: stat.PVESpecialKill,
@@ -146,6 +148,7 @@ func userStatRowFromStats(userID int64, stat sporenet.PlayerStats) userStatRow {
 
 func (row userStatRow) stats() sporenet.PlayerStats {
 	return sporenet.PlayerStats{
+		DNAEarned:         row.DNAEarned,
 		PVEPlayTimeSecond: row.PVEPlayTimeSecond,
 		PVEMinionKill:     row.PVEMinionKill, PVESpecialKill: row.PVESpecialKill,
 		PVEBossKill: row.PVEBossKill, PVETotalKill: row.PVETotalKill,

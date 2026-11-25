@@ -44,6 +44,7 @@ func authoredFirstAggroReaction(plan SpawnPlan, profile ActionProfile) ActionPro
 		return profile
 	}
 	isRoarSelected := false
+	preAggroAnimationName := ""
 	switch *ability {
 	case "FirstAggro_Roar33":
 		if !plan.IsRoarInitialized {
@@ -53,6 +54,8 @@ func authoredFirstAggroReaction(plan SpawnPlan, profile ActionProfile) ActionPro
 	case "FirstAggro_Roar": // Chunk 994 delegates unconditionally to template 848.
 		isRoarSelected = true
 	case "FirstAggro_FaceTarget": // Chunk 575 has no animation or wait.
+	case "FirstAggro_ActivateRobot": // Build-103 chunk 71.
+		preAggroAnimationName = profile.PreAggroAnimationName
 	default:
 		return profile
 	}
@@ -63,12 +66,17 @@ func authoredFirstAggroReaction(plan SpawnPlan, profile ActionProfile) ActionPro
 	profile.FirstAggroEffectDelay = 0
 	profile.FirstAggroDelay = 0
 	profile.FirstAggroRevealDelay = 0
-	profile.PreAggroAnimationName = ""
+	profile.PreAggroAnimationName = preAggroAnimationName
 	profile.IsFirstAggroFacingSuppressed = false
 	profile.IsFirstAggroDurationKnown = true
 	if isRoarSelected {
 		profile.FirstAggroAnimationName = "first_aggro_roar"
 		profile.FirstAggroDelay = 1750 * time.Millisecond
+	}
+	if *ability == "FirstAggro_ActivateRobot" {
+		profile.FirstAggroAnimationName = "zlm_minn_tc_2_aggro"
+		profile.FirstAggroDelay = 1299999952 * time.Nanosecond
+		profile.IsFirstAggroFacingSuppressed = true
 	}
 	return profile
 }

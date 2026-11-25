@@ -159,7 +159,7 @@ func (a dnaGranter) GrantDNA(ctx context.Context, command chat.DNACommand) (uint
 	if ctx == nil || a.userManager == nil || command.Amount == 0 {
 		return 0, chat.ErrDNAUnavailable
 	}
-	dna, err := a.userManager.GrantDNA(ctx, command.Sender.ID, command.Amount)
+	dna, err := a.userManager.GrantDeveloperDNA(ctx, command.Sender.ID, command.Amount)
 	if errors.Is(err, sporenet.ErrDNAOverflow) {
 		return 0, chat.ErrDNAOverflow
 	}

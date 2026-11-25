@@ -1,0 +1,17 @@
+[package]
+name = "darkspin-lua-decompiler"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+unluac = { git = "https://github.com/x3zvawq/unluac-rs", rev = "3186d2e392e44a2ddaadd1826a779c98c718be53", default-features = false }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]

@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
@@ -86,7 +88,6 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	isLob := false
 	isCryosRezMelee := false
 	isHomerMelee := false
-	isHybridMelee := false
 	isSpecialTwoMelee := false
 	isNashiraMelee := false
 	isPullerMelee := false
@@ -117,16 +118,6 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			)
 			isHomerMelee = isSelectedFound &&
 				selectedProfile.AbilityName == "NocturnaSpecialHomerMelee"
-		}
-		_, isHybridFamily := zonenpc.ZelemBasicHybridMeleeProfile(
-			peekNPC.Plan.NounName,
-		)
-		if isPeekNPCFound && isPeekTargetFound && isHybridFamily {
-			selectedProfile, isSelectedFound := campaignNPCActionProfile(
-				peekNPC.Plan, peekTarget.Position, peekTarget.FootprintRadius,
-			)
-			isHybridMelee = isSelectedFound &&
-				selectedProfile.AbilityName == "ZelemBasicHybridMelee"
 		}
 		_, isSpecialTwoFamily := zonenpc.CitadelSpecialTwoMeleeProfile(
 			peekNPC.Plan.NounName,
@@ -174,12 +165,6 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	if isPullerMelee {
 		return r.produceEnemyMeleeWithPull(packet, sessionKey, generation, objectID, timestamp, false)
 	}
-	err := r.startCampaignSuppressionAura(
-		packet, sessionKey, generation, objectID, timestamp,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("suppressionAuraStart: %w", err)
-	}
 	if isTurtleActive {
 		return nil, nil
 	}
@@ -188,7 +173,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			packet, sessionKey, generation, objectID, timestamp,
 		)
 	}
-	if isHomerMelee || isHybridMelee || isSpecialTwoMelee || isNashiraMelee {
+	if isHomerMelee || isSpecialTwoMelee || isNashiraMelee {
 		return r.produceEnemyMelee(
 			packet, sessionKey, generation, objectID, timestamp,
 		)
@@ -250,6 +235,9 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		generation: generation, sourceObjectID: objectID, timestamp: timestamp,
 		kind: campaignNPCProjectileZelem,
 		plan: zonenpc.AttackPlan{ActionGeneration: actionGeneration},
+		// A stun or pursuit resumes this selected shot, not the source's
+		// default attack family (Polaris defaults to its non-projectile push).
+		volley: volley, isShotPending: true,
 	}
 	isDeferred, err := r.pursuit.deferAction(
 		packet, sessionKey, generation, objectID, timestamp,
@@ -316,15 +304,19 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		}
 		return nil, nil
 	}
+	targetObjectID := enemy.TargetObjectID
+	if volley.isActive && len(volley.targets) > volley.shotIndex {
+		targetObjectID = volley.targets[volley.shotIndex].ObjectID
+	}
 	peerSession, err = r.pursuit.advanceTargetPoseLocked(
-		peerSession, enemy.TargetObjectID,
+		peerSession, targetObjectID,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("enemyZelemTargetPose: %w", err)
 	}
 	target, isTargetFound := peerSession.campaignNPCTarget(
-		generation, enemy.TargetObjectID,
+		generation, targetObjectID,
 	)
 	if !isTargetFound {
 		r.registry.mutex.Unlock()
@@ -346,6 +338,14 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		return nil, nil
 	}
 	profile, isProfileFound := zonenpc.ActionProfileForPlan(enemy.Plan)
+	if profile.AbilityName == "ZelemBasicHybridProjectile" && volley.plan.Profile.AbilityName == "" {
+		profile, isProfileFound = campaignNPCActionProfile(enemy.Plan, target.Position, target.ActorFootprintRadius)
+		if isProfileFound && profile.AbilityName == "ZelemBasicHybridMelee" {
+			r.registry.sessions[sessionKey] = peerSession
+			r.registry.mutex.Unlock()
+			return r.produceEnemyMelee(packet, sessionKey, generation, objectID, timestamp)
+		}
+	}
 	if zonenpc.ArcturusRank(enemy.Plan.NounName) != 0 && !volley.isActive {
 		profile, isProfileFound = campaignNPCActionProfile(enemy.Plan, target.Position, target.ActorFootprintRadius)
 		if isProfileFound && profile.Family == zonenpc.ActionCone {
@@ -379,27 +379,56 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		)
 		profile = applyNPCSlowTiming(profile, slowAttackScale)
 	}
+	if !volley.isActive && profile.ProjectileTargetRadius > 0 {
+		targets := peerSession.zone.LiveNPCTargets()
+		sort.Slice(targets, func(a, b int) bool {
+			return targets[a].ObjectID < targets[b].ObjectID
+		})
+		// Keep the admitted target first, then emit one beam per other target.
+		if zonegeometry.Distance(enemy.Plan.Position, target.Position) <= profile.ProjectileTargetRadius {
+			volley.targets = append(volley.targets, target)
+		}
+		for _, candidate := range targets {
+			if candidate.ObjectID == target.ObjectID || zonegeometry.Distance(enemy.Plan.Position, candidate.Position) > profile.ProjectileTargetRadius {
+				continue
+			}
+			volley.targets = append(volley.targets, candidate)
+		}
+		if len(volley.targets) == 0 {
+			r.registry.mutex.Unlock()
+			r.releaseAction(sessionKey, generation, objectID)
+			return nil, nil
+		}
+		target = volley.targets[0]
+		profile.ProjectileShotCount = uint32(len(volley.targets))
+	}
 	isControlProjectile := profile.AbilityName == "Puller"
+	isThornNova := profile.AbilityName == "ScaldronBasicThorno_ThornNova"
 	ability, abilityErr := campaignNPCProjectileAbility(profile)
 	if abilityErr != nil {
 		r.registry.mutex.Unlock()
+		r.releaseActionGeneration(sessionKey, generation, objectID, actionGeneration)
 		return nil, fmt.Errorf("enemyZelemAbility: %w", abilityErr)
 	}
 	plan := zonenpc.AttackPlan{}
 	var planErr error
 	if volley.isActive {
 		if profile.ProjectileShotCount < 2 ||
-			volley.plan.TargetObjectID != target.ObjectID {
+			(len(volley.targets) == 0 && volley.plan.TargetObjectID != target.ObjectID) {
 			r.registry.mutex.Unlock()
 			return nil, nil
 		}
+		attackRange := profile.Range
+		if profile.ProjectileTargetRadius > 0 {
+			attackRange = profile.ProjectileTargetRadius
+		}
 		volleyRange, rangeErr := zoneaction.NPCStopDistance(
-			profile.Range, enemy.Plan.ActorFootprintRadius(),
+			attackRange, enemy.Plan.ActorFootprintRadius(),
 			target.ActorFootprintRadius,
 		)
 		isVolleyTargetInRange := rangeErr == nil &&
 			zonegeometry.Distance(enemy.Plan.Position, target.Position) < volleyRange
-		if !isVolleyTargetInRange {
+		if !isVolleyTargetInRange && !isThornNova {
 			r.registry.mutex.Unlock()
 			r.logger.Printf(
 				"RakNet campaign projectile volley stopped object=%d target=%d shot=%d/%d distance=%.3f range=%.3f reason=live target out of range",
@@ -445,6 +474,15 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			target.ActorFootprintRadius,
 		)
 		if actionErr != nil || !action.IsPursuitNeeded {
+			r.registry.mutex.Unlock()
+			return nil, nil
+		}
+		if profile.MovementSpeed <= 0 {
+			// A stationary attacker must re-enter attack selection when a
+			// target returns. Pursuit would wait indefinitely for movement.
+			peerSession.zone.NPCs().ReleaseBlockedPursuit(
+				objectID, enemy.ActionOwner, actionGeneration, r.now().Add(500*time.Millisecond),
+			)
 			r.registry.mutex.Unlock()
 			return nil, nil
 		}
@@ -499,11 +537,14 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		volley = campaignNPCProjectileVolley{
 			isActive: true, startTimestamp: timestamp,
 			retainedTargetPosition: target.Position,
+			targets:                volley.targets,
 			plan:                   plan,
 		}
 	}
 	aimTarget := target
-	if volley.isActive && !profile.IsProjectileTrackingBetweenShots {
+	if volley.isActive && len(volley.targets) > volley.shotIndex {
+		aimTarget.Position = volley.targets[volley.shotIndex].Position
+	} else if volley.isActive && !profile.IsProjectileTrackingBetweenShots {
 		aimTarget.Position = volley.retainedTargetPosition
 	}
 	aimGeometry := geometry
@@ -533,7 +574,13 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	if volley.isActive {
 		sourcePosition.Z += projectileOffset.Z
 	}
-	if volley.isActive && profile.IsProjectileParallelVolley {
+	isBurstShotRooted := profile.AbilityName == "BurstShot" &&
+		peerSession.zone.NPCs().RootRemaining(objectID, r.now()) > 0
+	if isBurstShotRooted {
+		// Immobilized gunners can fire along their existing heading.
+		targetPosition = sourcePosition.Add(enemy.Facing.Scale(profile.ProjectileDistance))
+	}
+	if volley.isActive && profile.IsProjectileParallelVolley && len(volley.targets) == 0 && !isThornNova {
 		if volley.shotIndex < len(profile.ProjectileOffsets) {
 			sourcePosition = campaignNPCProjectileSourceOffset(
 				sourcePosition, targetPosition, projectileOffset,
@@ -581,6 +628,15 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			sourcePosition, targetPosition, profile.ProjectileDistance,
 		)
 	}
+	sourceFootprint := enemy.Plan.NPCProfile.FootprintRadius
+	if isThornNova {
+		// Build 103 SpawnThorn starts at the caster center. GetFixedDir
+		// spaces the one-based shot indices around the world XY plane.
+		angle := 2 * math.Pi * (float64(volley.shotIndex) + 1.5) / float64(profile.ProjectileShotCount)
+		sine, cosine := math.Sincos(angle)
+		targetPosition = sourcePosition.Add(game.Vec3{X: float32(cosine), Y: float32(sine)}.Scale(profile.ProjectileDistance))
+		sourceFootprint = 0
+	}
 	isDelayedVolleyShot := volley.isActive && volley.shotIndex > 0 &&
 		volley.shotIndex < len(profile.ProjectileShotDeadlines) &&
 		profile.ProjectileShotDeadlines[volley.shotIndex] > 0
@@ -590,7 +646,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		ability.ReleaseDelay = 0
 	}
 	launchPosition := campaignProjectileLaunchPosition(
-		sourcePosition, targetPosition, enemy.Plan.NPCProfile.FootprintRadius,
+		sourcePosition, targetPosition, sourceFootprint,
 	)
 	distance := zoneability.Distance(launchPosition, targetPosition)
 	collisionDelay := max(
@@ -635,10 +691,10 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		ImpactPosition: sim.Position{
 			X: targetPosition.X, Y: targetPosition.Y, Z: targetPosition.Z,
 		},
-		FootprintRadius: enemy.Plan.NPCProfile.FootprintRadius,
+		FootprintRadius: sourceFootprint,
 		CollisionDelay:  collisionDelay, IsDirectHit: true, IsCollisionExternallyDriven: true,
 		IsPiercing:  profile.IsProjectilePiercing,
-		HomingDelay: profile.HomingDelay, IsHoming: profile.HomingDelay > 0,
+		HomingDelay: profile.HomingDelay, IsHoming: profile.IsHomingProjectile(),
 		Damage: result.Damage, IsCritical: result.IsCritical,
 		IsControl:      isControlProjectile,
 		TargetHitPoint: target.HitPoint, TargetManaPoint: target.ManaPoint,
@@ -654,7 +710,8 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	}
 	// Caster pose uses the root and selected target, never muzzle offsets,
 	// spread, leading, or the projectile's maximum-range endpoint.
-	if !volley.isActive || volley.shotIndex == 0 || profile.IsProjectileTrackingBetweenShots {
+	if !isBurstShotRooted &&
+		(!volley.isActive || volley.shotIndex == 0 || profile.IsProjectileTrackingBetweenShots) {
 		facingPlan := plan
 		facingPlan.SourcePosition = enemy.Plan.Position
 		facingPlan.TargetPosition = aimTarget.Position
@@ -663,7 +720,10 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			facingPlan.Profile.IsFacingPolicyKnown = true
 			facingPlan.Profile.IsFacingSuppressed = false
 		}
-		turnPackets, turnErr := npcraknet.FaceTarget(facingPlan, profile.IsProjectileTrackingBetweenShots)
+		// Burst Shot validates its target again for each shot. A live object
+		// facing goal would keep tracking independently of those checks.
+		isLiveTracking := profile.IsProjectileTrackingBetweenShots && profile.AbilityName != "BurstShot"
+		turnPackets, turnErr := npcraknet.FaceTarget(facingPlan, isLiveTracking)
 		if turnErr != nil {
 			projectileRun.Stop()
 			r.registry.mutex.Unlock()
@@ -675,6 +735,23 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			return nil, nil
 		}
 		immediatePackets = append(turnPackets, immediatePackets...)
+	}
+	if !volley.isActive || volley.shotIndex == 0 {
+		releaseDelay := profile.ReleaseDelay
+		for _, shotDelay := range profile.ProjectileShotDeadlines {
+			releaseDelay = max(releaseDelay, shotDelay+profile.HitDelay)
+		}
+		idlePackets, isWindowSet, idleErr := prepareNPCIdleWindow(peerSession.zone.NPCs(), enemy,
+			startedAt, releaseDelay, profile.Cooldown)
+		if idleErr != nil || !isWindowSet {
+			projectileRun.Stop()
+			r.registry.mutex.Unlock()
+			if idleErr != nil {
+				return nil, fmt.Errorf("enemyShotIdle: %w", idleErr)
+			}
+			return nil, nil
+		}
+		immediatePackets = append(idlePackets, immediatePackets...)
 	}
 	trackErr := peerSession.trackCampaignNPCProjectile(projectileObjectID, projectileRun)
 	if trackErr != nil {
@@ -718,7 +795,9 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			producers, projectileSchedule.producer(scheduledDeadline),
 		)
 	}
-	if profile.HomingDelay > 0 {
+	// Sampled missiles expire when the flight exhausts its actual range. A
+	// wall-clock deadline based on nominal speed can cut a slowed flight short.
+	if profile.IsHomingProjectile() && flight == nil {
 		expiryDelay := ability.HitDelay + time.Duration(
 			float64(profile.ProjectileDistance)/float64(profile.ProjectileSpeed)*
 				float64(time.Second),
@@ -802,7 +881,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		targetPosition.X, targetPosition.Y, targetPosition.Z,
 		aimTarget.LinearVelocity.X, aimTarget.LinearVelocity.Y,
 		aimTarget.LinearVelocity.Z, distance, collisionDelay.Milliseconds(),
-		profile.HomingDelay > 0, profile.IsProjectilePiercing,
+		profile.IsHomingProjectile(), profile.IsProjectilePiercing,
 	)
 	return nil, nil
 }

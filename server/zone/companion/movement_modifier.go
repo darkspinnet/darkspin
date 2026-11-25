@@ -19,7 +19,7 @@ func (e *Session) BindMovementModifiers(source MovementModifierSource) {
 
 func (e *Session) refreshMovementModifiersLocked(actor Actor, at time.Time) Actor {
 	if e.movementModifierSource == nil || at.IsZero() {
-		return actor
+		return e.refreshWalkingPathsLocked(actor, at)
 	}
 	for !actor.movementModifierExpiry.IsZero() && !at.Before(actor.movementModifierExpiry) {
 		changeAt := actor.movementModifierExpiry
@@ -30,7 +30,7 @@ func (e *Session) refreshMovementModifiersLocked(actor Actor, at time.Time) Acto
 	buff, nextExpiry := e.movementModifierSource.MovementDebuff(actor.ObjectID, at)
 	actor = e.rebaseMovementModifierLocked(actor, at, buff)
 	actor.movementModifierExpiry = nextExpiry
-	return actor
+	return e.refreshWalkingPathsLocked(actor, at)
 }
 
 func (e *Session) rebaseMovementModifierLocked(actor Actor, at time.Time, buff float32) Actor {
@@ -39,7 +39,14 @@ func (e *Session) rebaseMovementModifierLocked(actor Actor, at time.Time, buff f
 	}
 	previousScale := max(float32(.1), 1+actor.MovementSpeedBuff+actor.movementModifierBuff)
 	scale := max(float32(.1), 1+actor.MovementSpeedBuff+buff)
+	actor = e.rebaseMovementScaleLocked(actor, at, previousScale, scale)
+	actor.movementModifierBuff = buff
+	return actor
+}
+
+func (e *Session) rebaseMovementScaleLocked(actor Actor, at time.Time, previousScale, scale float32) Actor {
 	position := actor.PositionAt(at)
+	actor = e.refreshWalkingPathsLocked(actor, at)
 	if actor.IsFollowing && at.Before(actor.followDeadline) {
 		remaining := actor.followDeadline.Sub(at)
 		remaining = time.Duration(float64(remaining) * float64(previousScale/scale))
@@ -57,7 +64,6 @@ func (e *Session) rebaseMovementModifierLocked(actor Actor, at time.Time, buff f
 		actor.pursuitDeadline = at.Add(remaining)
 	}
 	actor.Position = position
-	actor.movementModifierBuff = buff
 	e.motionRevision++
 	return actor
 }

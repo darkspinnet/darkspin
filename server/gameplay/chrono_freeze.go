@@ -183,6 +183,15 @@ func (e *chronoFreezeStep) expire() ([][]byte, error) {
 	if e.isCanceled || e.runtime.registry.chronoFreezes[e.key] != e {
 		return nil, nil
 	}
+	if e.run == nil {
+		reconcile := npcChronoReconciliation{runtime: e.runtime, key: e.key}
+		err := reconcile.reconcileLocked()
+		if err != nil {
+			reconcile.retry(err)
+			return nil, fmt.Errorf("chronoNPCExpiry: %w", err)
+		}
+		return nil, nil
+	}
 	if !e.isTargetCurrentLocked() {
 		e.cancelLocked()
 		delete(e.runtime.registry.chronoFreezes, e.key)

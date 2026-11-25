@@ -266,6 +266,8 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 				},
 				FootprintRadius: actorFootprint,
 				CollisionDelay:  collisionDelay, IsDirectHit: isEnemyFound,
+				IsHoming:                    isEnemyFound && projectileDefinition.IsHoming,
+				HomingDelay:                 projectileDefinition.HomingDelay,
 				IsCollisionExternallyDriven: true, Damage: projectilePlan.Damage.Maximum,
 				IsCollisionSampled: flight != nil,
 				IsPiercing:         projectileDefinition.IsPiercing,
@@ -310,6 +312,7 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 			},
 		})
 	}
+	isMoving := peerSession.playerMotionSnapshot().Movement().IsMoving
 	err = peerSession.stopPlayerMovement(abilityStartTime)
 	if err != nil {
 		stopProjectileRuns(projectileRuns)
@@ -323,6 +326,15 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 		stopProjectileRuns(projectileRuns)
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignProjectileStopMarshal: %w", marshalErr)
+	}
+	if !isActiveRequest && definition.Name == "LightningTempest_Basic" && isMoving {
+		stopPacket, stopErr := marshalReflectedPlayerStop(command.Common.ObjectID, peerSession.playerPosition)
+		if stopErr != nil {
+			stopProjectileRuns(projectileRuns)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("lightningTempestBasicStop: %w", stopErr)
+		}
+		movementPackets = append(movementPackets, stopPacket)
 	}
 	ackPacket, marshalErr := abilityraknet.Acknowledge(
 		abilityraknet.AcknowledgeRequest{

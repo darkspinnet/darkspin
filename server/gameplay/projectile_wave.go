@@ -36,6 +36,7 @@ func (e campaignProjectileStep) produceWaveFlight(
 ) ([][]byte, error) {
 	schedule := e.schedule
 	snapshot, segments := schedule.run.SampleCollisionMotion(now)
+	segments = clipProjectileObstacles(peerSession.zone.Navigation(), segments)
 	flight, err := schedule.flight.AdvanceMotion(
 		e.deadline-schedule.projectile.HitDelay, segments,
 		snapshot.IsActive && snapshot.RemainingDistance <= 0, nil,
@@ -44,19 +45,24 @@ func (e campaignProjectileStep) produceWaveFlight(
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("waveMotion: %w", err)
 	}
-	// WaitForProjectile checks exhausted range before exposing collision flags.
+	var terminalPackets [][]byte
 	if flight.IsResolved {
-		terminalPackets, resolveErr := schedule.run.ResolveCollision(
+		terminalPackets, err = schedule.run.ResolveCollision(
 			context.Background(), e.deadline, false, false, 0,
 			schedule.plan.Damage.Maximum, false, flight.Position, sim.Position(schedule.facing),
 		)
-		if resolveErr != nil {
+		if err != nil {
 			schedule.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("waveExpire: %w", resolveErr)
+			return nil, fmt.Errorf("waveExpire: %w", err)
 		}
-		e.finishFlightLocked(&peerSession)
-		schedule.runtime.registry.mutex.Unlock()
-		return append(packets, terminalPackets...), nil
+		// WaitForProjectile checks exhausted range before exposing collision
+		// flags. A blocker instead leaves valid contacts on the approach.
+		if !flight.IsBlocked {
+			e.finishFlightLocked(&peerSession)
+			schedule.runtime.registry.mutex.Unlock()
+			return append(packets, terminalPackets...), nil
+		}
+		snapshot.Position = flight.Position
 	}
 	contacts, err := schedule.wave.contacts(schedule, peerSession, snapshot, segments)
 	if err != nil {
@@ -118,6 +124,9 @@ func (e campaignProjectileStep) produceWaveFlight(
 	if peerSession.binding.Mode != game.ModeArena {
 		schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
 	}
+	if flight.IsResolved {
+		e.finishFlightLocked(&peerSession)
+	}
 	schedule.runtime.registry.mutex.Unlock()
 	if arenaTargets, isArena := enemies.(*arenaAbilityTargets); isArena {
 		arenaTargets.finish()
@@ -136,6 +145,9 @@ func (e campaignProjectileStep) produceWaveFlight(
 			return nil, fmt.Errorf("wavePublish: %w", publishErr)
 		}
 		packets = append(packets, resultPackets...)
+	}
+	if flight.IsResolved {
+		return append(packets, terminalPackets...), nil
 	}
 	if isFinalScheduledStep {
 		// Slow and freeze extend the same guarded producer chain as other
@@ -178,6 +190,9 @@ func (e *campaignProjectileWave) contacts(
 		}
 		distance := float32(0)
 		for _, segment := range segments {
+			if segment.IsBlocked && segment.Distance == 0 {
+				break
+			}
 			collision, collisionErr := sim.ResolveProjectileOrientedBoxCollision(sim.ProjectileBoxCollisionInput{
 				ProjectilePosition: segment.Position, ProjectileDirection: segment.Direction,
 				ProjectileHalfExtent: e.halfExtent, MaximumDistance: segment.Distance,
@@ -186,7 +201,8 @@ func (e *campaignProjectileWave) contacts(
 			if collisionErr != nil {
 				return nil, fmt.Errorf("targetCollision: %w", collisionErr)
 			}
-			if collision.IsDirectHit && collision.TravelDistance <= segment.Distance {
+			if collision.IsDirectHit && collision.TravelDistance <= segment.Distance &&
+				(!segment.IsBlocked || collision.TravelDistance < segment.Distance) {
 				contacts = append(contacts, campaignWaveContact{target: target, position: collision.Position, distance: distance + collision.TravelDistance})
 				break
 			}

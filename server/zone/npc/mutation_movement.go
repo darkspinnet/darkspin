@@ -47,6 +47,7 @@ func (e *Session) approachMutationCandidate(source *Snapshot, target Snapshot, r
 		return false, fmt.Errorf("mutationApproachRange: %w", err)
 	}
 	candidate := *source
+	traversals := make([]navigation.Traversal, 0)
 	previous := candidate.Mutation.Movement
 	state := previous
 	isSameTarget := state.IsApproaching && state.TargetObjectID == target.Plan.ObjectID &&
@@ -74,7 +75,7 @@ func (e *Session) approachMutationCandidate(source *Snapshot, target Snapshot, r
 		travel := min(speed*float32(elapsed.Seconds()), max(float32(0), distance-stopDistance+
 			pursuitArrivalMargin(candidate.Plan.Position, target.Plan.Position, stopDistance)))
 		if travel > 0 {
-			step, stepErr := zoneaction.AdvancePursuitPathStep(e.navigationMesh, candidate.Plan.Position,
+			step, stepErr := zoneaction.AdvanceTraversalPathStep(e.navigationMesh, candidate.Plan.Position,
 				target.Plan.Position, candidate.NavigationRadius(), travel, candidate.Navigation)
 			if stepErr != nil {
 				isBlocked = true
@@ -82,6 +83,7 @@ func (e *Session) approachMutationCandidate(source *Snapshot, target Snapshot, r
 				candidate.Facing = directionTo(candidate.Plan.Position, step.Position)
 				candidate.Plan.Position = step.Position
 				candidate.PositionRevision++
+				traversals = append(traversals, step.Traversals...)
 			}
 		}
 		isInRange = zonegeometry.Distance(candidate.Plan.Position, target.Plan.Position) < stopDistance
@@ -117,6 +119,7 @@ func (e *Session) approachMutationCandidate(source *Snapshot, target Snapshot, r
 		}
 	}
 	*source = candidate
+	e.recordNavigationTraversals(candidate.Plan.ObjectID, traversals)
 	return isInRange && !isBlocked, nil
 }
 
@@ -135,10 +138,7 @@ func mutationApproachSpeed(actor Snapshot, at time.Time) (float32, float32, erro
 		speed += baseSpeed * 1.5
 		bonus += 1.5
 	}
-	scale := float32(1)
-	if at.Before(actor.status.slowExpiresAt) {
-		scale = max(float32(0.05), actor.status.slowMovementScale)
-	}
+	scale := actor.status.slowProfile(at).Movement
 	scale *= areaShiftMovementScale(actor, at)
 	return speed * max(float32(0.05), scale), bonus, nil
 }
@@ -152,6 +152,7 @@ type MutationMovementRequest struct {
 }
 
 type MutationMovementResult struct {
+	traversals        []navigation.Traversal
 	State             MutationMovementState
 	Position          game.Vec3
 	Waypoint          game.Vec3
@@ -210,12 +211,14 @@ func (e *Session) advanceMutationMovement(source *Snapshot, req MutationAdvanceR
 		}
 	}
 	*source = candidate
+	e.recordNavigationTraversals(candidate.Plan.ObjectID, result.traversals)
 	return nil
 }
 
 func (e *Session) advanceMutationMovementLocked(source *Snapshot, req MutationMovementRequest) (MutationMovementResult, error) {
+	traversals := make([]navigation.Traversal, 0)
 	actor := *source
-	if actor.IsDefeated || actor.Plan.NounName != MutationAgentNounName {
+	if actor.IsDefeated || !isMutationWanderActor(actor) {
 		return MutationMovementResult{}, nil
 	}
 	state := req.State
@@ -269,15 +272,12 @@ func (e *Session) advanceMutationMovementLocked(source *Snapshot, req MutationMo
 		speed += baseSpeed * 1.5
 	}
 	// Match SlowMovementScale without reacquiring the already-held NPC lock.
-	slowScale := float32(1)
-	if req.At.Before(actor.status.slowExpiresAt) {
-		slowScale = max(float32(0.05), actor.status.slowMovementScale)
-	}
+	slowScale := actor.status.slowProfile(req.At).Movement
 	slowScale *= areaShiftMovementScale(actor, req.At)
 	speed *= max(float32(0.05), slowScale)
 	elapsed := req.At.Sub(state.UpdatedAt)
 	if elapsed > 0 && speed > 0 && actor.Plan.Position != state.Destination {
-		step, err := zoneaction.AdvancePursuitPathStep(e.navigationMesh, actor.Plan.Position,
+		step, err := zoneaction.AdvanceTraversalPathStep(e.navigationMesh, actor.Plan.Position,
 			state.Destination, actor.NavigationRadius(), speed*float32(elapsed.Seconds()), actor.Navigation)
 		if err != nil {
 			// An unavailable corridor owns no straight-line fallback through walls.
@@ -286,6 +286,7 @@ func (e *Session) advanceMutationMovementLocked(source *Snapshot, req MutationMo
 			actor.Facing = directionTo(actor.Plan.Position, step.Position)
 			actor.Plan.Position = step.Position
 			result.Waypoint = step.Waypoint
+			traversals = append(traversals, step.Traversals...)
 		}
 	}
 	state.UpdatedAt = req.At
@@ -355,7 +356,26 @@ func (e *Session) advanceMutationMovementLocked(source *Snapshot, req MutationMo
 		actor.PositionRevision++
 	}
 	*source = actor
+	result.traversals = traversals
 	return result, nil
+}
+
+// The mutation lifecycle already admits derived agents through their authored
+// death ability. Require the build-103 MutationAgent contract in both phases
+// before that lifecycle owns their movement, without a literal-noun gate.
+func isMutationWanderActor(actor Snapshot) bool {
+	if actor.Plan.NounName == MutationAgentNounName {
+		return true
+	}
+	if !isMutationAgent(actor.Plan) {
+		return false
+	}
+	graph := actor.Plan.NPCProfile.AIGraph
+	if graph == nil || !graph.IsResolved {
+		return false
+	}
+	return strings.EqualFold(graph.PassiveIdle, "nBehavior_MutationAgent_Wander") &&
+		strings.EqualFold(graph.CombatIdle, "nBehavior_MutationAgent_Wander")
 }
 
 func (e *Session) mutationWaypointLocked(actor Snapshot, destination game.Vec3) (game.Vec3, bool) {
@@ -368,11 +388,17 @@ func (e *Session) mutationWaypointLocked(actor Snapshot, destination game.Vec3) 
 	}
 	path, err := e.navigationMesh.CreatePath(navigation.Vec3(actor.Plan.Position), navigation.Vec3(destination), navigation.PathOptions{
 		ProjectionOptions: navigation.ProjectionOptions{PlanLayer: planLayer, MaxDistance: 12}, MaxVisitedPolygon: 2048,
+		IsTraversalAllowed: true,
 	})
 	if err != nil {
 		return actor.Plan.Position, false
 	}
-	for _, point := range path.Points {
+	for index, point := range path.Points {
+		if index > 0 && path.TraversalAt(index-1).MarkerID != 0 {
+			// The movement sampler owns the jump. Native locomotion approaches
+			// its entry and waits for the separately published teleport.
+			return game.Vec3(path.Points[index-1]), true
+		}
 		waypoint := game.Vec3(point)
 		if waypoint != actor.Plan.Position {
 			return waypoint, true
@@ -403,9 +429,9 @@ func isMutationMovementBlocked(actor Snapshot, at time.Time) bool {
 	if isStatusSuppressed {
 		return false
 	}
-	return at.Before(actor.status.rootExpiresAt) || at.Before(actor.status.bioEntangleExpiresAt) ||
-		at.Before(actor.status.supportHealerRootExpiresAt) || at.Before(actor.status.stunExpiresAt) ||
-		at.Before(actor.status.banishExpiresAt) || at.Before(actor.status.sleepExpiresAt)
+	return at.Before(actor.status.rootEnd()) || at.Before(actor.status.bioEntangleExpiresAt) ||
+		at.Before(actor.status.supportHealerRootExpiresAt) || at.Before(actor.status.stunEnd()) ||
+		at.Before(actor.status.banishEnd()) || at.Before(actor.status.sleepEnd())
 }
 
 func (e *Session) mutationDestinationLocked(actor Snapshot, origin game.Vec3) (game.Vec3, error) {

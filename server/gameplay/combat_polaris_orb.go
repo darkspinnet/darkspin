@@ -354,7 +354,7 @@ func (e campaignNPCGravityOrbSchedule) next() ([][]byte, error) {
 		return step.produce()
 	}
 	packets, err := e.runtime.producePolarisPhaseTransition(
-		e.packet, e.sessionKey, e.generation, e.sourceID, timestamp,
+		e.packet, e.sessionKey, e.generation, e.sourceID, e.actionGeneration, timestamp,
 		polarisNextPush,
 	)
 	if err != nil {
@@ -399,7 +399,7 @@ func (r campaignNPCActionRuntime) producePolarisGravityOrb(
 	if !isCorruptor && peerSession.campaignNPCGravityOrbs[objectID] != nil {
 		r.registry.mutex.Unlock()
 		return r.producePolarisPhaseTransition(
-			packet, sessionKey, generation, objectID, timestamp, polarisNextPush,
+			packet, sessionKey, generation, objectID, npc.ActionGeneration, timestamp, polarisNextPush,
 		)
 	}
 	player := make(map[uint64]struct{})

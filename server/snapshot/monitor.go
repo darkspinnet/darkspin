@@ -353,9 +353,11 @@ func (e *Service) detectNPCDriftRequests(
 			npc.object.Kind, objectID, npc.object.NounName, distance, sample.AllowedDistance,
 			probe.clientObjectID,
 		)
+		category := npc.object.Kind + "_position_drift"
 		requests = append(requests, autoRequest{anomaly: anomaly{
 			Actor: npc.actor, Context: contextText,
-			Fingerprint: fingerprint, ObjectID: objectID, IsPersistent: true,
+			Fingerprint: fingerprint, ObjectID: objectID,
+			Category: category, PeerGeneration: state.Sessions[0].TransportGeneration,
 			TriggeredAt: state.CapturedAt, Detector: "object_position_drift",
 			Threshold: sample.AllowedDistance, Measured: distance,
 		}})

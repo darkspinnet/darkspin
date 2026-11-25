@@ -7,6 +7,8 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	zoneboss "github.com/darkspinnet/darkspin/server/zone/boss"
+	zonehorde "github.com/darkspinnet/darkspin/server/zone/horde"
+	horderaknet "github.com/darkspinnet/darkspin/server/zone/horde/raknet103"
 	zonesecurity "github.com/darkspinnet/darkspin/server/zone/security"
 )
 
@@ -102,6 +104,25 @@ func (e *gameplayPeerSession) pollTeleporterContacts(
 	// Consume each real segment once, including polls with no accepted route.
 	// Successful relocation reseeds the sample at its destination instead.
 	e.retainTeleporterSample(current)
+	gate, err := e.zone.ConstrainRoute(previous, current)
+	if err != nil {
+		return nil, game.CampaignTeleportRoute{}, false, fmt.Errorf("teleporterHordeRoute: %w", err)
+	}
+	if gate.GateContact.MarkerID != 0 {
+		route := game.CampaignTeleportRoute{
+			MarkerID: gate.GateContact.MarkerID, Source: gate.GateContact.Position,
+			Destination: gate.Current,
+		}
+		packets, err := e.enterHordeGate(e.deployedObjectID, gate.GateContact, now)
+		if err != nil {
+			return nil, route, false, fmt.Errorf("teleporterHordeEnter: %w", err)
+		}
+		err = e.syncZoneHeroPose()
+		if err != nil {
+			return nil, route, false, fmt.Errorf("teleporterHordePose: %w", err)
+		}
+		return packets, route, true, nil
+	}
 	packets, route, isTeleported, err := e.observeCampaignTunnel(previous, current, orientation, timestamp, now)
 	if err != nil {
 		return nil, route, false, fmt.Errorf("teleporterTunnel: %w", err)
@@ -146,4 +167,16 @@ func (e *gameplayPeerSession) pollTeleporterContacts(
 	}
 	packets = append(packets, securityStatePackets...)
 	return packets, route, isTeleported, nil
+}
+
+func (e *gameplayPeerSession) enterHordeGate(objectID uint32, contact zonehorde.GateContact, now time.Time) ([][]byte, error) {
+	packets, err := horderaknet.GateRepel(objectID, contact)
+	if err != nil {
+		return nil, fmt.Errorf("hordeGatePackets: %w", err)
+	}
+	err = e.teleportPlayer(now, raknet.Vector3(contact.ReturnPosition))
+	if err != nil {
+		return nil, fmt.Errorf("hordeGateMove: %w", err)
+	}
+	return packets, nil
 }

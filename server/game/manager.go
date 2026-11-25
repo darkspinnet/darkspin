@@ -26,6 +26,7 @@ type ResumeCheckpoint struct {
 	Slot                uint16
 	ExpectedPlayerCount uint16
 	IsReplayRandomized  bool
+	IsNoReplay          bool
 	CampaignBots        []BotRequest
 }
 
@@ -114,6 +115,7 @@ type Info struct {
 	IsIgnored           bool
 	IsWarped            bool
 	IsReplayRandomized  bool
+	IsNoReplay          bool
 }
 
 // NetworkEndpoint is one gameplay address advertised through Blaze.
@@ -1198,6 +1200,7 @@ func (m *Manager) Restore(
 				MaxPlayers: MaxGamePlayers, HostNetwork: m.hostNetwork,
 				Mode: mode, Level: checkpoint.Level,
 				IsReplayRandomized: checkpoint.IsReplayRandomized,
+				IsNoReplay:         checkpoint.IsNoReplay,
 			},
 			isAdmissionReserved: checkpoint.ExpectedPlayerCount > 1,
 			isCheckpointRestore: true,
@@ -1270,7 +1273,8 @@ func (g *Instance) validateRestore(checkpoint ResumeCheckpoint) error {
 	if !strings.EqualFold(g.Info.Level, checkpoint.Level) {
 		return errors.New("game restore level mismatch")
 	}
-	if g.Info.IsReplayRandomized != checkpoint.IsReplayRandomized {
+	if g.Info.IsReplayRandomized != checkpoint.IsReplayRandomized ||
+		g.Info.IsNoReplay != checkpoint.IsNoReplay {
 		return errors.New("game restore replay mismatch")
 	}
 	if g.RunSeed == 0 || g.RunSeed != checkpoint.RunSeed {

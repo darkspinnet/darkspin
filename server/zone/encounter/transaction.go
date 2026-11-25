@@ -120,8 +120,8 @@ func AdmitBossSecondWave(
 	return nil
 }
 
-// AdmitBoss commits an armed boss encounter while retaining the leader as a
-// dormant boss-session plan. Only the add plans enter the live NPC session.
+// AdmitBoss admits a Destructor immediately. A deferred captain stays dormant
+// while its opening adds enter the live NPC session.
 func AdmitBoss(
 	npcSession *zonenpc.Session,
 	bossSession *zoneboss.Session,
@@ -129,10 +129,13 @@ func AdmitBoss(
 	plans []zonenpc.SpawnPlan,
 ) error {
 	if npcSession == nil || bossSession == nil ||
-		targetObjectID == 0 || len(plans) < 2 {
+		targetObjectID == 0 || len(plans) == 0 {
 		return errors.New("boss admission invalid")
 	}
 	addPlans := plans[1:]
+	if !bossSession.IsLeaderDeferred() {
+		addPlans = plans
+	}
 	err := npcSession.CanAdd(addPlans, targetObjectID)
 	if err != nil {
 		return fmt.Errorf("bossNPCCheck: %w", err)

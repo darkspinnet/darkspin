@@ -163,7 +163,8 @@ func (e heroDrainSchedule) tick(deadline time.Duration) ([][]byte, error) {
 		return e.tickArenaNecroLocked(peerSession, deadline)
 	}
 	target, isTargetFound := peerSession.zone.NPCs().NPC(e.targetObjectID)
-	if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 ||
+	if peerSession.deployedHitPoint() <= 0 || peerSession.isHeroSelectionPending ||
+		!isTargetFound || target.IsDefeated || target.HitPoint <= 0 ||
 		target.Faction != zonenpc.FactionNonPlayerAligned ||
 		!isInsideZoneTrigger(
 			peerSession.playerPosition,
@@ -362,6 +363,10 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelDrain(
 	activeAbilityID uint32, targetObjectID uint32, sessionKey string,
 	abilityStartTime time.Time,
 ) ([][]byte, error) {
+	if peerSession.deployedHitPoint() <= 0 || peerSession.isHeroSelectionPending {
+		r.registry.mutex.Unlock()
+		return req.reject("channel drain source defeated")
+	}
 	if definition.Name == "VoodooTempestActive" {
 		return r.handleWebTransfusion(req, peerSession, creature, definition, activeAbilityID, sessionKey, abilityStartTime)
 	}

@@ -20,14 +20,15 @@ import (
 )
 
 type campaignArcturusLaunch struct {
-	runtime        campaignNPCActionRuntime
-	packet         raknet.Packet
-	sessionKey     string
-	generation     uint64
-	objectID       uint32
-	timestamp      uint64
-	state          *campaignArcturusState
-	protectedUntil time.Time
+	runtime          campaignNPCActionRuntime
+	packet           raknet.Packet
+	sessionKey       string
+	generation       uint64
+	objectID         uint32
+	actionGeneration uint64
+	timestamp        uint64
+	state            *campaignArcturusState
+	protectedUntil   time.Time
 }
 
 type campaignArcturusLaunchStep struct {
@@ -45,7 +46,7 @@ func (e campaignNPCActionRuntime) produceArcturusLaunch(packet raknet.Packet, se
 		return nil, false, nil
 	}
 	state := current.campaignArcturusStates[objectID]
-	if state == nil {
+	if state == nil || state.zone != current.zone {
 		e.registry.mutex.Unlock()
 		return nil, false, nil
 	}
@@ -76,15 +77,9 @@ func (e campaignNPCActionRuntime) produceArcturusLaunch(packet raknet.Packet, se
 	}
 	run := &campaignArcturusLaunch{runtime: e, packet: packet.Autonomous(),
 		sessionKey: sessionKey, generation: generation, objectID: objectID,
-		timestamp: timestamp, state: state, protectedUntil: e.now().Add(9200 * time.Millisecond)}
+		actionGeneration: boss.ActionGeneration,
+		timestamp:        timestamp, state: state, protectedUntil: e.now().Add(9200 * time.Millisecond)}
 	state.launch = run
-	if state.turret != nil {
-		turret, isTurretFound := current.zone.NPCs().NPC(state.turret.objectID)
-		if !isTurretFound || turret.IsDefeated {
-			// TurretCheck recreates a destroyed turret at a later launch.
-			state.turret = nil
-		}
-	}
 	e.registry.mutex.Unlock()
 	animation, err := npcraknet.AnimationState(objectID, "ctd_boss_tc_attack1_launch", timestamp)
 	if err != nil {
@@ -98,10 +93,13 @@ func (e campaignNPCActionRuntime) produceArcturusLaunch(packet raknet.Packet, se
 	}
 	producers := make([]raknet.ScheduledPacketProducer, 0, 17)
 	for phase := 0; phase < 17; phase++ {
+		// Build-103 launch animation owns the airborne presentation. Its Lua
+		// does not hide the actor; do not suppress its native model/render state.
+		if phase == 1 {
+			continue
+		}
 		delay := time.Second
 		switch {
-		case phase == 1:
-			delay = 2 * time.Second
 		case phase >= 2 && phase <= 13:
 			delay = 1500*time.Millisecond + time.Duration(phase-2)*500*time.Millisecond
 		case phase == 14:
@@ -130,9 +128,16 @@ func (e *campaignArcturusLaunch) abort() {
 	e.runtime.registry.mutex.Lock()
 	defer e.runtime.registry.mutex.Unlock()
 	current, isFound := e.runtime.registry.sessions[e.sessionKey]
-	if isFound && current.generation == e.generation && current.campaignArcturusStates[e.objectID] == e.state && e.state.launch == e {
+	if isFound && current.generation == e.generation && current.zone == e.state.zone &&
+		current.campaignArcturusStates[e.objectID] == e.state && e.state.launch == e {
 		e.state.launch = nil
 		current.zone.NPCs().ClearIntangible(e.objectID, e.protectedUntil)
+		// SupersedeAction retired the previous cast before launch preparation.
+		// Failed preparation owns no next producer; release only that new cast
+		// so the encounter loop can reacquire it without touching a replacement.
+		current.zone.NPCs().ReleaseActionGeneration(e.objectID, zonenpc.ActionOwner{
+			UserID: current.binding.UserID, PeerGeneration: e.generation,
+		}, e.actionGeneration)
 	}
 }
 
@@ -141,13 +146,21 @@ func (e campaignArcturusLaunchStep) produce() ([][]byte, error) {
 	run.runtime.registry.mutex.Lock()
 	current, isFound := run.runtime.registry.sessions[run.sessionKey]
 	if !isFound || current.generation != run.generation || current.isZoneTerminal() ||
-		current.campaignArcturusStates[run.objectID] != run.state || run.state.launch != run {
+		current.zone != run.state.zone || current.campaignArcturusStates[run.objectID] != run.state || run.state.launch != run {
 		run.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
 	boss, isBossFound := current.zone.NPCs().NPC(run.objectID)
 	if !isBossFound {
 		run.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	if !boss.IsActionStarted || boss.ActionGeneration != run.actionGeneration ||
+		boss.ActionOwner != (zonenpc.ActionOwner{UserID: current.binding.UserID, PeerGeneration: run.generation}) {
+		run.runtime.registry.mutex.Unlock()
+		// Landing and combat resume belong to this exclusive launch, not a
+		// newer action. Abort removes only its state and exact protection lease.
+		run.abort()
 		return nil, nil
 	}
 	isAlive := !boss.IsDefeated && boss.HitPoint > 0
@@ -164,20 +177,33 @@ func (e campaignArcturusLaunchStep) produce() ([][]byte, error) {
 	switch {
 	case e.phase == 0:
 		err = current.zone.NPCs().ApplyIntangible(run.objectID, run.protectedUntil)
-	case e.phase == 1:
-		var packet []byte
-		packet, err = raknet.MarshalApplication(raknet.ObjectUpdateMessage{ObjectID: run.objectID,
-			IsVisible: false, PositionX: boss.Plan.Position.X, PositionY: boss.Plan.Position.Y, PositionZ: boss.Plan.Position.Z})
-		packets = append(packets, packet)
 	case e.phase >= 2 && e.phase <= 13:
 		packets, err = run.dropMissile(&current, boss, run.timestamp+1500+uint64(e.phase-2)*500)
 	case e.phase == 14:
+		if run.state.turret != nil {
+			turret, isTurretFound := current.zone.NPCs().NPC(run.state.turret.objectID)
+			if !isTurretFound || turret.IsDefeated {
+				run.state.turret = nil
+			}
+		}
+		if zonenpc.ArcturusRank(boss.Plan.NounName) > 1 && run.state.turret == nil {
+			// Chunk 569 invokes TurretCheck after its missile phase, just
+			// before landing. A dead turret is not recreated by passive ticks.
+			owner := campaignArcturusSpawnStep{runtime: run.runtime, packet: run.packet,
+				sessionKey: run.sessionKey, generation: run.generation, objectID: run.objectID,
+				timestamp: run.timestamp + 9000, state: run.state}
+			turretPackets, turretErr := owner.startTurret(&current, boss)
+			if turretErr != nil {
+				run.runtime.logger.Printf("Arcturus landing turret omitted source=%d: %v", run.objectID, turretErr)
+			}
+			packets = append(packets, turretPackets...)
+		}
 		position := run.state.center
 		err = current.zone.NPCs().SetPosition(run.objectID, position)
 		if err == nil {
 			var packet []byte
-			packet, err = raknet.MarshalApplication(raknet.ObjectUpdateMessage{ObjectID: run.objectID,
-				IsVisible: true, PositionX: position.X, PositionY: position.Y, PositionZ: position.Z})
+			packet, err = raknet.MarshalApplication(raknet.ObjectPositionUpdateMessage{ObjectID: run.objectID,
+				PositionX: position.X, PositionY: position.Y, PositionZ: position.Z})
 			packets = append(packets, packet)
 		}
 		if err == nil {

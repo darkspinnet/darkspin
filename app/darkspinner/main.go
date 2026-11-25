@@ -21,6 +21,7 @@ import (
 
 	serverauth "github.com/darkspinnet/darkspin/server/auth"
 	"github.com/darkspinnet/darkspin/server/game"
+	server "github.com/darkspinnet/darkspin/server/runtime"
 	"github.com/wailsapp/wails/v2"
 	wailsoptions "github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -106,7 +107,6 @@ func main() {
 		}
 		return
 	}
-	privilegeErr := ensureStandardUser()
 	err := configureDarkSpinnerVersion()
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner version failed:", err)
@@ -117,9 +117,16 @@ func main() {
 		return
 	}
 	if hasLaunchArgument(os.Args[1:], detachedGameArgument) {
-		if privilegeErr != nil {
-			_, _ = fmt.Fprintln(os.Stderr, privilegeLaunchMessage(privilegeErr))
-			return
+		if ensureStandardUser() != nil {
+			isAllowed, preferenceErr := readElevatedLaunchPreference()
+			if preferenceErr != nil {
+				writeDetachedLaunchError(fmt.Errorf("detachedElevationRead: %w", preferenceErr))
+				return
+			}
+			if !isAllowed {
+				writeDetachedLaunchError(errors.New("open DarkSpinner and acknowledge the administrator warning before launching an elevated game instance"))
+				return
+			}
 		}
 		err = runDetachedGame(os.Args[1:])
 		if err != nil {
@@ -144,19 +151,14 @@ func main() {
 		return
 	}
 	defer releaseInstance()
-	var integrationErr error
-	if privilegeErr == nil {
-		integrationErr = completePendingInstallation(os.Args[1:])
-		if integrationErr != nil {
-			_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner integration setup failed:", integrationErr)
-		}
-	}
 	err = prepareRuntime()
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner startup failed:", err)
 		os.Exit(1)
 	}
 	app := NewApp(removePresentationArguments(removeInstallationArguments(os.Args[1:])))
+	app.installationArguments = os.Args[1:]
+	app.configureElevatedLaunch()
 	basePath, cleanupErr := executableDirectory()
 	if cleanupErr == nil {
 		cleanupErr = cleanupDetachedLogs(basePath)
@@ -165,12 +167,6 @@ func main() {
 		count, outputErr := fmt.Fprintln(os.Stderr, "Launcher diagnostic cleanup:", cleanupErr)
 		if outputErr != nil || count == 0 { /* Startup remains available if a previous log is locked. */
 		}
-	}
-	if privilegeErr != nil {
-		app.startupError = privilegeLaunchMessage(privilegeErr)
-	}
-	if integrationErr != nil {
-		app.integrationError = integrationErr.Error()
 	}
 	if isHeadless {
 		err = runHeadless(app, !hasLaunchArgument(os.Args[1:], "no-browser"))
@@ -217,13 +213,6 @@ func removePresentationArguments(arguments []string) []string {
 	return filteredArguments
 }
 
-func privilegeLaunchMessage(err error) string {
-	if errors.Is(err, errElevatedLaunch) {
-		return "DarkSpinner cannot run as an administrator. Close this launcher and start it normally without Run as administrator."
-	}
-	return fmt.Sprintf("DarkSpinner could not verify standard-user mode: %v", err)
-}
-
 func hasVersionArgument(arguments []string) bool {
 	for _, argument := range arguments {
 		if argument == "--version" || argument == "-version" {
@@ -231,6 +220,13 @@ func hasVersionArgument(arguments []string) bool {
 		}
 	}
 	return false
+}
+
+func writeStartupDiagnostic(message string, err error) {
+	count, writeErr := fmt.Fprintln(os.Stderr, message+":", err)
+	if writeErr != nil || count == 0 {
+		// Early diagnostics are best effort when stderr is unavailable.
+	}
 }
 
 func run(ctx context.Context, arguments []string) error {
@@ -353,7 +349,7 @@ func runWithSnapshotControl(ctx context.Context, arguments []string, connection 
 	if err != nil {
 		return fmt.Errorf("gameData: %w", err)
 	}
-	gameConfig, _, err := game.LoadConfig(pathSet.configPath)
+	gameConfig, _, err := server.LoadLocalConfiguration(pathSet.configPath)
 	if err != nil {
 		return fmt.Errorf("localeConfig: %w", err)
 	}
@@ -394,6 +390,12 @@ func runWithSnapshotControl(ctx context.Context, arguments []string, connection 
 	clientProfile := configuration.clientProfile
 	if clientProfile == "" {
 		clientProfile = configuration.account
+	}
+	if configuration.clientResult == "" && configuration.launchID == "" {
+		configuration.launchID, configuration.clientResult, err = newClientFailureTarget(baseDirectory)
+		if err != nil {
+			return fmt.Errorf("captureTarget: %w", err)
+		}
 	}
 	err = configureClientFailure(
 		configuration.clientResult, configuration.launchID, pathSet.tracePath,
@@ -447,6 +449,8 @@ func runWithSnapshotControl(ctx context.Context, arguments []string, connection 
 		return fmt.Errorf("winePrefix: %w", err)
 	}
 	wineLaunch.modManifest = configuration.modManifest
+	bugCapture := startClientBugCapture(ctx, configuration.serverAddress)
+	defer bugCapture.stop()
 	err = launchInjected(
 		ctx, gamePath, installDirectory(gameWorkingDirectory), fangPath,
 		gameArguments, configuration.serverAddress, wineLaunch,
@@ -917,6 +921,7 @@ func gameExitDescription(exitCode uint32) (string, bool) {
 		0xc0000374: "heap corruption detected",
 		0xc0000409: "stack buffer overrun or fail-fast termination",
 		0xd15c0001: "Darkspinner closed the client after its login watchdog expired",
+		0xd15c0002: "Darkspinner closed the client after login was rejected; see the launcher login failure details",
 	}[exitCode]
 	return description, description != ""
 }

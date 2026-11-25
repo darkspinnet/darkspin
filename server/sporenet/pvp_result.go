@@ -117,6 +117,11 @@ func (e *UserManager) RecordPVPMatch(ctx context.Context, userID int64, req PVPM
 	}
 	next.PVPDamageMaximum = max(previous.PVPDamageMaximum, req.DamageMaximum)
 	next.PVPHealingMaximum = max(previous.PVPHealingMaximum, req.HealingMaximum)
+	err = addDNAEarned(&next, req.DNAReward)
+	if err != nil {
+		user.mu.Unlock()
+		return fmt.Errorf("pvpDNA: %w", err)
+	}
 	previousResults := user.PVPResults
 	previousDNA := user.Account.DNA
 	if req.DNAReward > ^uint32(0)-previousDNA {

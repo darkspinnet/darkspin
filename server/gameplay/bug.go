@@ -84,6 +84,8 @@ func bugContextForSession(
 	result.CrogenitorLevel = binding.AvatarLevel
 	result.CampaignProgression = binding.ChainProgression
 	result.IsReplay = binding.IsReplay
+	result.IsReplayRandomized = binding.IsReplayRandomized
+	result.IsNoReplay = binding.IsNoReplay
 	result.IsCheckpointRestore = binding.IsCheckpointRestore
 	result.IsOverdriveUnlocked = binding.IsOverdriveUnlocked
 	result.IsGodModeEnabled = peerSession.isGodModeEnabled

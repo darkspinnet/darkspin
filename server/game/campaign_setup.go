@@ -268,6 +268,7 @@ type CampaignScriptObject struct {
 
 // CampaignDirector is the immutable level input accepted by campaign setup.
 type CampaignDirector struct {
+	ZoneRules                ZoneRules
 	AttributeMirrorTuning    AttributeMirrorTuning
 	LocalPools               []CampaignDirectorPool
 	OrdinaryAgentEntries     []CampaignDirectorEntry
@@ -299,8 +300,10 @@ type CampaignDirector struct {
 	OrbDifficultyScales           []float32
 	// IsFirstClear retains the requesting player's personal campaign state.
 	IsFirstClear bool
-	// IsReplay selects the shared randomized replay roster and authored captain.
-	IsReplay bool
+	// IsReplay selects the shared randomized replay roster and seeded ending.
+	IsReplay   bool
+	IsNoReplay bool
+	RunSeed    uint64
 	// Enabling this mode is server policy, not a recovered original-server decision.
 	IsFirstTimeDirectorEnabled bool
 	// IsFirstTimeRosterSelected records the party-progress branch after checking
@@ -411,11 +414,11 @@ func (d CampaignDirector) InitialChainDestructibles(selectionID uint32) (
 		return nil, nil, fmt.Errorf("fixtureLevel: %q", d.Level)
 	}
 	if d.IsInitialLayoutSelected {
-		markers, deletedObjectIDs, err := d.MapDestructibles()
+		markers, takeoverObjectIDs, removalOnlyObjectIDs, err := d.MapDestructibles()
 		if err != nil {
 			return nil, nil, fmt.Errorf("fixtureLayout: %w", err)
 		}
-		return markers, deletedObjectIDs, nil
+		return markers, append(takeoverObjectIDs, removalOnlyObjectIDs...), nil
 	}
 	selectedSet := fmt.Sprintf("zelems_1_smart_objects_%d.markerset", selectionID%3+1)
 	fixtures := make([]CampaignDirectorMarker, 0)
@@ -1001,7 +1004,9 @@ func (o *CampaignSetup) Execute(ctx context.Context, binding GameplayBinding) (C
 	}
 	director.IsFirstClear = binding.IsFirstRunLevel()
 	director.IsReplay = binding.IsReplayRandomized
-	director.IsFirstTimeDirectorEnabled = binding.IsFirstTimeDirectorEnabled
+	director.RunSeed = binding.RunSeed
+	director.IsNoReplay = binding.IsNoReplay
+	director.IsFirstTimeDirectorEnabled = binding.IsFirstTimeDirectorEnabled || binding.IsNoReplay
 	if !binding.IsWarped && len(director.Pools) == 0 {
 		return CampaignDirector{}, errors.New("campaign setup: empty director pools")
 	}

@@ -30,6 +30,7 @@ func (e *Motion) SetActorNavigation(mesh *navigation.Mesh, footprintRadius float
 	}
 	e.navigationObjectID = objectID
 	e.navigation = mesh
+	e.isNavigationAnchorPresent = false
 	e.footprintRadius = footprintRadius
 	e.navigationActor = navigation.ActorNavigation{Radius: footprintRadius, Mode: mode}
 	if mesh != nil {
@@ -39,6 +40,7 @@ func (e *Motion) SetActorNavigation(mesh *navigation.Mesh, footprintRadius float
 			e.navigationActor.IsPresent = true
 		}
 	}
+	e.rememberNavigationPositionLocked(e.position)
 }
 
 func (e *Motion) setGoal(
@@ -63,20 +65,35 @@ func (e *Motion) setGoal(
 			ProjectionOptions: navigation.ProjectionOptions{
 				PlanLayer: planLayer, MaxDistance: projectionRange,
 			},
-			MaxVisitedPolygon: maximumVisitedPolygon,
+			MaxVisitedPolygon:  maximumVisitedPolygon,
+			IsTraversalAllowed: true,
 		},
 	)
 	if err != nil {
 		return sim.Position{}, fmt.Errorf("routeCreate: %w", err)
 	}
-	points := make([]sim.Position, 0, len(path.Points))
-	for _, point := range path.Points {
+	pointCount := len(path.Points)
+	for _, traversal := range path.Traversals {
+		if traversal.PointIndex < 0 || traversal.PointIndex >= len(path.Points) {
+			return sim.Position{}, errors.New("movement traversal entry unavailable")
+		}
+		pointCount = min(pointCount, traversal.PointIndex+1)
+	}
+	// Motion walks only as far as the first authored trigger entry. The normal
+	// encounter observer performs its transition; the destination and departure
+	// route must never become a LinearMovement segment or goal.
+	points := make([]sim.Position, 0, pointCount)
+	for _, point := range path.Points[:pointCount] {
 		points = append(points, sim.Position(point))
 	}
 	result, err := movement.SetPath(at, points, speed)
 	if err != nil {
 		return sim.Position{}, fmt.Errorf("routeSet: %w", err)
 	}
+	// CreatePath already validated this terrain point and collision clearance;
+	// do not repeat a projection for every movement/pose observation.
+	e.navigationAnchor = sim.Position(path.Start.Position)
+	e.isNavigationAnchorPresent = true
 	return result, nil
 }
 
@@ -118,6 +135,11 @@ func (e *Motion) reconcilePosition(
 	if err != nil {
 		// An unreachable observation is rejected; the running authoritative
 		// route remains valid and continues instead of failing the command.
+		return position, false, nil
+	}
+	if len(path.Traversals) != 0 {
+		// An authored jump cannot justify an observed-pose correction, even
+		// when its walking legs fit inside the ordinary drift allowance.
 		return position, false, nil
 	}
 	distance := path.Start.Distance + path.Goal.Distance

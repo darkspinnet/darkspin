@@ -11,6 +11,7 @@ import (
 	contentsqlite "github.com/darkspinnet/darkspin/content/sqlite"
 	"github.com/darkspinnet/darkspin/server/game"
 	server "github.com/darkspinnet/darkspin/server/runtime"
+	"github.com/darkspinnet/darkspin/server/runtime/playerstore"
 	"github.com/spf13/cobra"
 )
 
@@ -29,7 +30,7 @@ func newContentPreflightCommand() *cobra.Command {
 	if configPath == "" {
 		configPath = game.DefaultConfigFilename
 	}
-	command.Flags().StringVar(&options.configPath, "config", configPath, "existing server configuration")
+	command.Flags().StringVar(&options.configPath, "config", configPath, "local configuration or dedicated runtime path anchor")
 	command.Flags().StringVar(&options.gamePath, "game-path", os.Getenv("DARKSPIN_GAME_PATH"), "required readable build-103 installation for content rebuilds")
 	return command
 }
@@ -43,19 +44,25 @@ func (e *contentPreflightOptions) run(command *cobra.Command, args []string) (re
 	if err != nil {
 		return fmt.Errorf("configPath: %w", err)
 	}
-	fi, err := os.Stat(configPath)
-	if err != nil {
-		return fmt.Errorf("configStat: %w", err)
+	var config *game.Config
+	var isCreated bool
+	if playerstore.IsEnvironmentConfigured() {
+		config, isCreated, err = game.LoadDedicatedConfig(configPath)
+	} else {
+		fi, statErr := os.Stat(configPath)
+		if statErr != nil {
+			return fmt.Errorf("configStat: %w", statErr)
+		}
+		if !fi.Mode().IsRegular() {
+			return errors.New("preflight requires an existing local configuration file")
+		}
+		config, isCreated, err = server.LoadLocalConfiguration(configPath)
 	}
-	if !fi.Mode().IsRegular() {
-		return errors.New("preflight requires an existing configuration file")
-	}
-	config, isCreated, err := game.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("configLoad: %w", err)
 	}
 	if isCreated {
-		return errors.New("preflight requires an existing server configuration")
+		return errors.New("preflight configuration was not available")
 	}
 	contentPath, err := config.ContentPath(configPath)
 	if err != nil {

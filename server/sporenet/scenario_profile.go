@@ -23,6 +23,8 @@ type DebugProfileRequest struct {
 	SourceLoginName      string
 	IsSourceCloneAllowed bool
 	IsPVPEnabled         bool
+	IsOverdriveUnlocked  bool
+	IsAdmin              bool
 	EquippedParts        []DebugEquippedPart
 }
 
@@ -121,6 +123,7 @@ func (e *UserManager) CreateDebugProfile(ctx context.Context, req DebugProfileRe
 		return DebugProfile{}, errors.New("new debug profile onboarding was already complete")
 	}
 	user.Account.ChainProgression = req.ChainProgression
+	user.Account.IsOverdriveUnlocked = req.IsOverdriveUnlocked
 	creatureIDs := [3]uint32{1, 2, 3}
 	for index, template := range templates {
 		creature := NewCreature(template)

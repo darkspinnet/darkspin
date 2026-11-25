@@ -46,17 +46,20 @@ type snapshot struct {
 // in-flight write. Neither Save method acquires the storage gate. Stored record
 // pointers are immutable; focused stat updates replace only the scalar overlay.
 type Repository struct {
-	store     Store
-	logger    *log.Logger
-	mutex     sync.Mutex
-	snapshots map[int64]snapshot
-	revision  uint64
-	isClosed  bool
-	wake      chan struct{}
-	done      chan struct{}
-	gate      chan struct{}
-	cancel    context.CancelFunc
-	closeErr  error
+	store         Store
+	logger        *log.Logger
+	mutex         sync.Mutex
+	snapshots     map[int64]snapshot
+	revision      uint64
+	isClosed      bool
+	wake          chan struct{}
+	done          chan struct{}
+	gate          chan struct{}
+	cancel        context.CancelFunc
+	closeErr      error
+	lastSuccessAt time.Time
+	lastFailureAt time.Time
+	failures      map[int64]time.Time
 }
 
 func New(store Store, logger *log.Logger) *Repository {

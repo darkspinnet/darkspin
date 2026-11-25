@@ -13,15 +13,17 @@ import (
 // GroupInput supplies a budget and fixed section archetypes. It contains no
 // wave count, admission, pacing, or scheduler decision.
 type GroupInput struct {
-	Budget     uint32
-	Stage      uint32
-	Section    sim.DirectorRouteSection
-	Multiplier float32
-	Minions    []game.CampaignDirectorEntry
-	Specials   []game.CampaignDirectorEntry
-	Sections   []zonepopulation.SectionRoster
-	Random     *sim.SimulatorRandom
-	PolicySeed uint32
+	Budget                  uint32
+	Stage                   uint32
+	Section                 sim.DirectorRouteSection
+	Multiplier              float32
+	Minions                 []game.CampaignDirectorEntry
+	Specials                []game.CampaignDirectorEntry
+	Sections                []zonepopulation.SectionRoster
+	Random                  *sim.SimulatorRandom
+	PolicySeed              uint32
+	LieutenantChancePercent uint32
+	LieutenantLimitPerWave  int
 }
 
 type GroupResult struct {
@@ -37,11 +39,12 @@ type hordeGroup struct {
 	policyState  uint32
 }
 
-// ComposeGroup follows sub_9F86D0 (mode 7), including independent LCG policy
-// and simulator MT noun draws. Server seeds remain an explicit local policy.
+// ComposeGroup retains the mode-7 roster/budget selection with independent LCG
+// policy and simulator MT noun draws. Lieutenant allowance is server-owned tuning.
 func ComposeGroup(req GroupInput) (GroupResult, error) {
 	if req.Stage == 0 || req.Random == nil || req.Section < sim.DirectorRouteSectionA ||
-		req.Section > sim.DirectorRouteSectionAny {
+		req.Section > sim.DirectorRouteSectionAny || req.LieutenantChancePercent > 100 ||
+		req.LieutenantLimitPerWave < 0 || req.LieutenantLimitPerWave > zonepopulation.MaximumGroupMemberCount {
 		return GroupResult{}, errors.New("horde group input invalid")
 	}
 	composer, err := zonepopulation.NewGroupComposer(zonepopulation.GroupComposerInput{
@@ -80,7 +83,7 @@ func ComposeGroup(req GroupInput) (GroupResult, error) {
 	))
 	globalSpecial := zonepopulation.NewGroupRoster(eligibleGroupEntries(req.Specials, req.Stage, true))
 	activeMinion := group.resolveMinion(currentMinion)
-	specialCeiling := hordeSpecialCeiling(req.Stage, group.policyDraw())
+	specialCeiling := hordeSpecialCeiling(req.LieutenantChancePercent, req.LieutenantLimitPerWave, group.policyDraw())
 	minionCount, specialCount := 0, 0
 	for composer.Count() < zonepopulation.MaximumGroupMemberCount && composer.Cost() < float32(req.Budget) &&
 		activeMinion.Count() != 0 {
@@ -142,25 +145,9 @@ func (e *hordeGroup) policyDraw() float64 {
 	return float64(int32(e.policyState))*(1.0/4294967296.0) + 0.5
 }
 
-func hordeSpecialCeiling(stage uint32, draw float64) int {
-	if draw < float64(float32(0.2)) {
-		switch {
-		case stage >= 33:
-			return 99
-		case stage >= 21:
-			return 4
-		case stage >= 9:
-			return 3
-		default:
-			return 2
-		}
-	}
-	// Keep the authored float32 cumulative comparisons from sub_9F86D0.
-	if float32(draw) < float32(float32(0.2)+float32(0.05)) {
-		return 2
-	}
-	if float32(draw) < float32(float32(float32(0.35)+float32(0.05))+float32(0.2)) {
-		return 1
+func hordeSpecialCeiling(chancePercent uint32, limit int, draw float64) int {
+	if draw < float64(chancePercent)/100 {
+		return limit
 	}
 	return 0
 }

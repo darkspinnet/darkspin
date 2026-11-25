@@ -21,6 +21,7 @@ type dumpRequest struct {
 	Actor                       Actor
 	Trigger                     string
 	Context                     string
+	Category                    string
 	Fingerprint                 string
 	ObjectID                    uint32
 	TriggerState                *StateFrame
@@ -46,6 +47,7 @@ type manifest struct {
 	BuildVersion                   string                      `json:"build_version,omitempty"`
 	Trigger                        string                      `json:"trigger"`
 	Context                        string                      `json:"context"`
+	Category                       string                      `json:"category,omitempty"`
 	Fingerprint                    string                      `json:"fingerprint,omitempty"`
 	ObjectID                       uint32                      `json:"object_id,omitempty"`
 	Actor                          Actor                       `json:"actor"`
@@ -129,6 +131,15 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 	if err != nil {
 		return dumpResult{}, fmt.Errorf("dumpContext: %w", err)
 	}
+	isAutomatic := req.Trigger == "automatic" && e.archiveDirectory != ""
+	if isAutomatic && e.storageCapacity != nil {
+		for _, directory := range []string{filepath.Dir(e.directory), filepath.Dir(e.archiveDirectory)} {
+			_, availableBytes, isKnown := e.storageCapacity(directory)
+			if isKnown && availableBytes < 2*uint64(automaticArchiveLimit) {
+				return dumpResult{}, errAutomaticStorageLow
+			}
+		}
+	}
 	now := time.Now().UTC()
 	id := fmt.Sprintf("SS-%06d", e.nextIncident.Add(1))
 	e.mu.Lock()
@@ -163,6 +174,9 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 	err = os.MkdirAll(directory, 0o755)
 	if err != nil {
 		return dumpResult{}, fmt.Errorf("snapshotDirectory: %w", err)
+	}
+	if isAutomatic {
+		defer e.removeAutomaticBundle(directory)
 	}
 	trafficPath := filepath.Join(directory, "raknet.jsonl")
 	trafficByteCount, err := writeTraffic(trafficPath, events)
@@ -300,12 +314,16 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 	archiveName := ""
 	if !req.IsArchiveDisabled && strings.TrimSpace(e.archiveDirectory) != "" {
 		archiveName = snapshotArchiveName(id, e.buildVersion, now)
+		if isAutomatic {
+			archiveName = strings.Replace(archiveName, "-darkspin-snapshot-", "-darkspin-snapshot-"+snapshotArchiveSegment(req.Category)+"-", 1)
+		}
 	}
 	metadata := manifest{
 		FormatVersion: 16, ID: id, CreatedAt: now,
 		BuildVersion: e.buildVersion, Trigger: req.Trigger, Context: req.Context,
 		Fingerprint: req.Fingerprint, ObjectID: req.ObjectID, Actor: req.Actor,
-		Mode: mode, BufferDuration: bufferDuration.String(), Delay: delay.String(),
+		Category: req.Category,
+		Mode:     mode, BufferDuration: bufferDuration.String(), Delay: delay.String(),
 		WindowStartedAt: windowStartedAt, WindowEndedAt: now,
 		TrafficEventCount: len(events), TrafficByteCount: trafficByteCount,
 		DroppedEventCount: droppedEventCount, ClientLineCount: len(client.lines),
@@ -365,8 +383,8 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 		return dumpResult{}, fmt.Errorf("manifestWrite: %w", err)
 	}
 	if archiveName != "" {
-		err = writeSnapshotArchive(
-			e.archiveDirectory, directory, directoryName, archiveName,
+		err = e.writeSnapshotArchive(
+			directory, directoryName, archiveName, isAutomatic,
 		)
 		if err != nil {
 			return dumpResult{}, fmt.Errorf("archiveWrite: %w", err)
@@ -457,10 +475,10 @@ func snapshotArchiveSegment(raw string) string {
 	return normalized
 }
 
-func writeSnapshotArchive(
-	archiveDirectory string, bundleDirectory string, bundleName string,
-	archiveName string,
+func (e *Service) writeSnapshotArchive(
+	bundleDirectory string, bundleName string, archiveName string, isAutomatic bool,
 ) error {
+	archiveDirectory := e.archiveDirectory
 	err := os.MkdirAll(archiveDirectory, 0o755)
 	if err != nil {
 		return fmt.Errorf("archiveMkdir: %w", err)
@@ -489,7 +507,11 @@ func writeSnapshotArchive(
 	if err != nil {
 		return fmt.Errorf("bundleRead: %w", err)
 	}
-	archive := zip.NewWriter(output)
+	var destination io.Writer = output
+	if isAutomatic {
+		destination = &automaticArchiveWriter{destination: output, remaining: automaticArchiveLimit}
+	}
+	archive := zip.NewWriter(destination)
 	for index, entry := range entries {
 		err = addSnapshotArchiveFile(
 			archive, bundleDirectory, bundleName, entry,
@@ -512,6 +534,16 @@ func writeSnapshotArchive(
 	err = output.Close()
 	if err != nil {
 		return fmt.Errorf("outputClose: %w", err)
+	}
+	if isAutomatic {
+		size, verifyErr := verifyAutomaticArchive(temporaryPath, bundleName)
+		if verifyErr != nil {
+			return fmt.Errorf("archiveVerify: %w", verifyErr)
+		}
+		err = e.pruneAutomaticArchives(size, false)
+		if err != nil {
+			return fmt.Errorf("archiveBudget: %w", err)
+		}
 	}
 	archivePath := filepath.Join(archiveDirectory, archiveName)
 	err = os.Rename(temporaryPath, archivePath)

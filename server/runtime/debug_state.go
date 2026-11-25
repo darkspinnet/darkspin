@@ -17,10 +17,15 @@ import (
 // LastReportedLocation is never a native scene or proof of world readiness.
 // Empty fields and false availability represent absent/unsupported observations.
 type DebugProfileState struct {
+	Level                     uint32
+	DNA                       uint32
+	PartCount                 uint32
+	IsResourcesAvailable      bool
 	CapturedAt                time.Time
 	UserID                    int64
 	IsAuthenticated           bool
 	SessionID                 string
+	IsNoReplayEnabled         bool
 	IsUserActive              bool
 	GameID                    uint32
 	PlaygroupID               uint32
@@ -34,6 +39,9 @@ type DebugProfileState struct {
 	SessionStage              string
 	MissionLabel              string
 	MissionAsset              string
+	IsReplay                  bool
+	IsReplayRandomized        bool
+	IsNoReplay                bool
 	MissionDifficulty         uint32
 	IsDungeonSetupFinal       bool
 	IsArena                   bool
@@ -89,7 +97,11 @@ func (e *Server) DebugProfileState(ctx context.Context, userID int64) (DebugProf
 	if !result.IsAuthenticated || user == nil {
 		return result, nil
 	}
+	resources := user.DebugResources()
+	result.Level, result.DNA, result.PartCount = resources.Level, resources.DNA, resources.PartCount
+	result.IsResourcesAvailable = true
 	result.GameID = user.CurrentGameID()
+	result.IsNoReplayEnabled = user.IsNoReplayEnabled()
 	result.PlaygroupID = user.CurrentPlaygroupID()
 	provider, isSupported := e.bugContext.(debugGameplayStateProvider)
 	if !isSupported {
@@ -109,6 +121,9 @@ func (e *Server) DebugProfileState(ctx context.Context, userID int64) (DebugProf
 		return result, nil
 	}
 	result.IsGameplayActive = gameplay.IsGameplayActive
+	result.IsReplay = gameplay.IsReplay
+	result.IsReplayRandomized = gameplay.IsReplayRandomized
+	result.IsNoReplay = gameplay.IsNoReplay
 	if !gameplay.IsGameplayActive {
 		return result, nil
 	}

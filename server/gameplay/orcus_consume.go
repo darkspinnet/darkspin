@@ -92,7 +92,7 @@ func (e campaignNPCActionRuntime) produceOrcusConsume(packet raknet.Packet,
 		run.followers[servant.Plan.ObjectID] = follower
 	}
 	run.reductionExpiresAt = e.now().Add(time.Second)
-	err = member.zone.NPCs().ApplyDamageReduction(objectID, .75, run.reductionExpiresAt)
+	err = member.zone.NPCs().ApplyVerdanthShield(objectID, .75, run.reductionExpiresAt)
 	e.registry.mutex.Unlock()
 	if err != nil {
 		run.finish()
@@ -206,7 +206,7 @@ func (e *orcusConsumeRun) follow() ([][]byte, error) {
 		return e.finish(), nil
 	}
 	e.reductionExpiresAt = runtime.now().Add(time.Second)
-	err := member.zone.NPCs().ApplyDamageReduction(e.request.objectID, .75, e.reductionExpiresAt)
+	err := member.zone.NPCs().ApplyVerdanthShield(e.request.objectID, .75, e.reductionExpiresAt)
 	if err != nil {
 		runtime.registry.mutex.Unlock()
 		e.finish()
@@ -360,7 +360,7 @@ func (e *orcusConsumeRun) finishLocked() [][]byte {
 			}
 		}
 	}
-	e.zone.NPCs().ClearDamageReduction(e.request.objectID, e.reductionExpiresAt)
+	e.zone.NPCs().ClearVerdanthShield(e.request.objectID, e.reductionExpiresAt)
 	packet, err := npcraknet.ShieldEffectAsset(e.request.objectID, 0, "verdanth_boss_shield.ServerEventDef", true)
 	if err != nil {
 		runtime.logger.Printf("Orcus shield removal omitted source=%d: %v", e.request.objectID, err)

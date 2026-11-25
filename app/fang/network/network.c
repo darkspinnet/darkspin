@@ -3,7 +3,6 @@
 #include "hook/trace.h"
 #include "bug/record.h"
 #include "login/login.h"
-#include "mod/mod.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -219,6 +218,28 @@ static int is_ipv4_port(const struct sockaddr* address, int length, unsigned sho
     return ipv4->sin_port == htons(port);
 }
 
+/* Build 103 can request fixed loopback service ports after bootstrap, including
+ * on standard remote launches. Normalize those before TCP/UDP routing so they
+ * use the selected server and the existing logical party envelope path. */
+// Modifies: maps fixed client loopback service ports to the configured endpoint ports.
+static int redirect_loopback_service_address(struct sockaddr_in* address) {
+    unsigned short requested;
+    if (address == NULL || address->sin_family != AF_INET ||
+        (ntohl(address->sin_addr.s_addr) >> 24) != 127) {
+        return 0;
+    }
+    requested = ntohs(address->sin_port);
+    if (requested == 42127) {
+        address->sin_port = htons(redirect_port);
+        return 1;
+    }
+    if (requested == 42128) {
+        address->sin_port = htons(redirect_party_port);
+        return 1;
+    }
+    return 0;
+}
+
 // Modifies: writes the configured redirect host's resolved IPv4 address to the caller's output.
 static int redirect_ipv4(struct in_addr* address) {
     struct hostent* resolved;
@@ -394,7 +415,7 @@ static int WSAAPI hooked_connect(SOCKET socket, const struct sockaddr* name, int
     int is_party_destination = 0;
     if (name != NULL && name_length >= (int)sizeof(struct sockaddr_in) && name->sa_family == AF_INET) {
         memcpy(&redirected, name, sizeof(redirected));
-        if (fang_redirect_mod_address(&redirected, redirect_port, redirect_party_port)) {
+        if (redirect_loopback_service_address(&redirected)) {
             effective = (const struct sockaddr*)&redirected;
         }
         if (redirected.sin_port == htons(80)) {
@@ -558,15 +579,15 @@ static int WSAAPI hooked_recv(SOCKET socket, char* buffer, int length, int flags
 // Modifies: redirects and envelopes party datagrams, tracks sockets, sends data, and records diagnostics.
 static int WSAAPI hooked_sendto(SOCKET socket, const char* buffer, int length, int flags, const struct sockaddr* destination, int destination_length) {
     struct sockaddr_in redirected;
-    struct sockaddr_in mod_destination;
+    struct sockaddr_in service_destination;
     const struct sockaddr* effective = destination;
     int wrapped_length = 0;
     char* wrapped = NULL;
     int result;
-    if (destination != NULL && destination_length >= (int)sizeof(mod_destination) && destination->sa_family == AF_INET) {
-        memcpy(&mod_destination, destination, sizeof(mod_destination));
-        if (fang_redirect_mod_address(&mod_destination, redirect_port, redirect_party_port)) {
-            destination = (const struct sockaddr*)&mod_destination;
+    if (destination != NULL && destination_length >= (int)sizeof(service_destination) && destination->sa_family == AF_INET) {
+        memcpy(&service_destination, destination, sizeof(service_destination));
+        if (redirect_loopback_service_address(&service_destination)) {
+            destination = (const struct sockaddr*)&service_destination;
             effective = destination;
         }
     }
@@ -618,8 +639,12 @@ static int WSAAPI hooked_recvfrom(SOCKET socket, char* buffer, int length, int f
 // Modifies: removes party bookkeeping and closes the native socket.
 static int WSAAPI hooked_closesocket(SOCKET socket) {
     int result;
+    int error;
     forget_party_socket(socket);
     result = original_closesocket(socket);
+    error = WSAGetLastError();
+    if (result == 0) fang_login_forget_socket(socket);
+    WSASetLastError(error);
     return result;
 }
 
@@ -640,7 +665,12 @@ static void trace_wsabuf_payload(const char* direction, const char* kind,
     BYTE* payload;
     DWORD copied = 0;
     DWORD index;
-    if (buffers == NULL || count == 0 || completed == 0 || completed > 65535) {
+    if (fang_network_capture_is_enabled() == 0 ||
+        buffers == NULL || count == 0 || completed == 0 || completed > 65535) {
+        return;
+    }
+    if (count == 1 && buffers[0].buf != NULL && completed <= buffers[0].len) {
+        trace_raknet_payload(direction, kind, socket, address, buffers[0].buf, (int)completed);
         return;
     }
     payload = (BYTE*)HeapAlloc(GetProcessHeap(), 0, (SIZE_T)completed);

@@ -114,9 +114,14 @@ func (e campaignFixtureBlastStep) instrumentKnockback(targetID uint32, profile z
 	if err != nil {
 		return nil, fmt.Errorf("instrumentPosition: %w", errors.Join(err, run.releaseLocked()))
 	}
-	err = member.zone.NPCs().ApplyStun(targetID, run.expiresAt)
+	isHeld, holdErr := member.zone.NPCs().AdmitStunModifier(targetID, modifier.instanceID, now, run.expiresAt)
+	err = holdErr
 	if err != nil {
 		return nil, fmt.Errorf("instrumentHold: %w", errors.Join(err, run.releaseLocked()))
+	}
+	if !isHeld {
+		// The knockback remains admitted independently of stun immunity.
+		// No stun contribution is installed for an immune recipient.
 	}
 	latest, isLatestFound := member.zone.NPCs().NPC(targetID)
 	if !isLatestFound {
@@ -154,7 +159,7 @@ func (e *instrumentKnockbackRun) releaseLocked() error {
 	if isRemoved && removed.TargetObjectID != e.modifier.record.TargetObjectID {
 		inventoryErr = errors.New("instrument inventory recipient changed")
 	}
-	e.world.NPCs().ClearStun(e.modifier.record.TargetObjectID, e.expiresAt)
+	e.world.NPCs().ClearStunModifier(e.modifier.record.TargetObjectID, e.modifier.instanceID)
 	if e.modifier.cancel != nil {
 		e.modifier.cancel()
 		e.modifier.cancel = nil

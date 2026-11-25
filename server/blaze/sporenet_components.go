@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/admission"
 	"github.com/darkspinnet/darkspin/server/blaze/tdf"
 	"github.com/darkspinnet/darkspin/server/sporenet"
 )
@@ -56,8 +57,20 @@ type identityLoginTokenVerifier interface {
 	VerifyIdentity(string, bool) (string, int64, int64, error)
 }
 
+type accountIdentityLoginTokenVerifier interface {
+	VerifyAccountIdentity(string, bool) (string, int64, int64, int64, error)
+}
+
+type credentialUserManager interface {
+	LoginCredential(context.Context, string, int64, int64, int64) sporenet.LoginResult
+}
+
 type verifiedUserManager interface {
 	LoginVerified(context.Context, string, int64, int64) sporenet.LoginResult
+}
+
+type sessionAdmissionAuthorizer interface {
+	AuthorizeSession(context.Context, int64) error
 }
 
 // UserManager is the Blaze adapter's application boundary. Blaze owns
@@ -150,10 +163,16 @@ func registerSporeNetComponentsWithPolicy(
 	if userManager == nil {
 		return errors.New("register SporeNet components: nil user manager")
 	}
+	authorizer, isSupported := userManager.(sessionAdmissionAuthorizer)
+	if isSupported {
+		registry.mu.Lock()
+		registry.accountAuthorizer = authorizer
+		registry.mu.Unlock()
+	}
 	component := authenticationComponent(userManager, tokenVerifier, membershipReconciler)
 	if isDedicated {
 		component.Commands[authLogin] = loginHandlerWithPolicy(userManager, tokenVerifier, membershipReconciler, true)
-		component.Commands[authExpressLogin] = dedicatedExpressLoginHandler(membershipReconciler)
+		component.Commands[authExpressLogin] = dedicatedExpressLoginHandler(userManager, membershipReconciler)
 	}
 	err := registry.Register(component)
 	if err != nil {
@@ -240,9 +259,13 @@ func loginHandlerWithPolicy(
 			verifiedLoginName := ""
 			accountID := int64(0)
 			notBefore := int64(0)
+			revision := int64(0)
 			var err error
+			accountVerifier, isCredentialSupported := tokenVerifier.(accountIdentityLoginTokenVerifier)
 			identityVerifier, isIdentitySupported := tokenVerifier.(identityLoginTokenVerifier)
-			if isIdentitySupported {
+			if isCredentialSupported {
+				verifiedLoginName, accountID, notBefore, revision, err = accountVerifier.VerifyAccountIdentity(password, isRemote)
+			} else if isIdentitySupported {
 				verifiedLoginName, accountID, notBefore, err = identityVerifier.VerifyIdentity(password, isRemote)
 			} else if isRemote {
 				remoteVerifier, isSupported := tokenVerifier.(remoteLoginTokenVerifier)
@@ -256,7 +279,10 @@ func loginHandlerWithPolicy(
 			}
 			if err == nil {
 				account = verifiedLoginName
-				if isIdentitySupported {
+				credentialManager, isCredentialManager := userManager.(credentialUserManager)
+				if isCredentialManager {
+					result = credentialManager.LoginCredential(ctx, verifiedLoginName, accountID, notBefore, revision)
+				} else if isIdentitySupported {
 					verifiedManager, isSupported := userManager.(verifiedUserManager)
 					if isSupported {
 						result = verifiedManager.LoginVerified(ctx, verifiedLoginName, accountID, notBefore)
@@ -275,11 +301,17 @@ func loginHandlerWithPolicy(
 		isAccepted := result.IsSuccess || result.IsAlreadyLoggedIn
 		logServerLoginAttempt(request, method, account, result.User, isAccepted)
 		if !isAccepted {
+			if result.IsAdmissionClosed {
+				return admissionLoginFailure(admission.State{
+					IsBlocked: true, Reason: result.AdmissionReason, Deadline: result.AdmissionDeadline,
+				}), nil
+			}
 			if result.IsWorldFull {
 				return loginFailureResponse("server-full", "The server is full. Try again later."), nil
 			}
 			return loginFailureResponse("account-login-rejected", "The server could not sign in this account. Sign in again from Darkspinner."), nil
 		}
+		observeGameplayLogin(ctx, request, userManager, result.User)
 		reconcileLoginMembership(result.User, membershipReconciler)
 		request.Session.Set(sessionUserKey, result.User)
 		return &Response{Fields: loginFields(result.User)}, nil
@@ -300,17 +332,24 @@ func logJWTLoginRejection(request *Request, verificationErr error) {
 func silentLoginHandler(
 	userManager UserManager, membershipReconciler LoginMembershipReconciler,
 ) Handler {
-	return func(_ context.Context, request *Request) (*Response, error) {
+	return func(ctx context.Context, request *Request) (*Response, error) {
 		clearSessionUser(request)
 		user := userManager.UserByAuthToken(fieldString(request.Fields, "AUTH"))
+		lease, failure := enterBlazeLoginAdmission(ctx, request, user)
+		if failure != nil {
+			return failure, nil
+		}
+		defer closeBlazeAdmission(lease, request.Session)
 		account := ""
 		if user != nil {
 			account = user.LoginName
 		}
-		logServerLoginAttempt(request, "session", account, user, user != nil)
-		if user == nil {
+		isAccepted := isSessionAdmissionAllowed(ctx, userManager, user)
+		logServerLoginAttempt(request, "session", account, user, isAccepted)
+		if !isAccepted {
 			return &Response{ErrorCode: authInvalidUser}, nil
 		}
+		observeGameplayLogin(ctx, request, userManager, user)
 		reconcileLoginMembership(user, membershipReconciler)
 		request.Session.Set(sessionUserKey, user)
 		return &Response{Fields: fullLoginFields(user)}, nil
@@ -320,41 +359,84 @@ func silentLoginHandler(
 func expressLoginHandler(
 	userManager UserManager, membershipReconciler LoginMembershipReconciler,
 ) Handler {
-	return func(_ context.Context, request *Request) (*Response, error) {
+	return func(ctx context.Context, request *Request) (*Response, error) {
 		peerIP := net.ParseIP(serverLoginRemoteIP(request))
 		if peerIP == nil || !peerIP.IsLoopback() {
-			return authenticatedExpressLogin(request, membershipReconciler), nil
+			return authenticatedExpressLogin(ctx, request, userManager, membershipReconciler), nil
 		}
 		clearSessionUser(request)
 		account := fieldString(request.Fields, "MAIL")
 		user := userManager.UserByLoginName(account)
-		logServerLoginAttempt(request, "express", account, user, user != nil)
-		if user == nil {
+		lease, failure := enterBlazeLoginAdmission(ctx, request, user)
+		if failure != nil {
+			return failure, nil
+		}
+		defer closeBlazeAdmission(lease, request.Session)
+		isAccepted := isSessionAdmissionAllowed(ctx, userManager, user)
+		logServerLoginAttempt(request, "express", account, user, isAccepted)
+		if !isAccepted {
 			return &Response{ErrorCode: authInvalidUser}, nil
 		}
+		observeGameplayLogin(ctx, request, userManager, user)
 		reconcileLoginMembership(user, membershipReconciler)
 		request.Session.Set(sessionUserKey, user)
 		return &Response{Fields: fullLoginFields(user)}, nil
 	}
 }
 
-func dedicatedExpressLoginHandler(membershipReconciler LoginMembershipReconciler) Handler {
-	return func(_ context.Context, request *Request) (*Response, error) {
-		return authenticatedExpressLogin(request, membershipReconciler), nil
+func dedicatedExpressLoginHandler(userManager UserManager, membershipReconciler LoginMembershipReconciler) Handler {
+	return func(ctx context.Context, request *Request) (*Response, error) {
+		return authenticatedExpressLogin(ctx, request, userManager, membershipReconciler), nil
 	}
 }
 
-func authenticatedExpressLogin(request *Request, membershipReconciler LoginMembershipReconciler) *Response {
+func authenticatedExpressLogin(
+	ctx context.Context, request *Request, userManager UserManager,
+	membershipReconciler LoginMembershipReconciler,
+) *Response {
 	account := fieldString(request.Fields, "MAIL")
 	user := requestUser(request)
+	lease, failure := enterBlazeLoginAdmission(ctx, request, user)
+	if failure != nil {
+		return failure
+	}
+	defer closeBlazeAdmission(lease, request.Session)
 	isAccepted := user != nil && strings.EqualFold(strings.TrimSpace(account), user.LoginName)
+	if isAccepted {
+		isAccepted = isSessionAdmissionAllowed(ctx, userManager, user)
+	}
 	logServerLoginAttempt(request, "express", account, user, isAccepted)
 	if !isAccepted {
 		clearSessionUser(request)
 		return &Response{ErrorCode: authInvalidUser}
 	}
+	observeGameplayLogin(ctx, request, userManager, user)
 	reconcileLoginMembership(user, membershipReconciler)
 	return &Response{Fields: fullLoginFields(user)}
+}
+
+func observeGameplayLogin(ctx context.Context, request *Request, userManager UserManager, user *sporenet.User) {
+	observer, isSupported := userManager.(interface {
+		ObserveGameplayLogin(context.Context, *sporenet.User)
+	})
+	if isSupported {
+		observer.ObserveGameplayLogin(ctx, user)
+	}
+	observeGameplayLoginIP(ctx, request, userManager, user)
+}
+
+func isSessionAdmissionAllowed(ctx context.Context, userManager UserManager, user *sporenet.User) bool {
+	if user == nil {
+		return false
+	}
+	authorizer, isSupported := userManager.(sessionAdmissionAuthorizer)
+	if !isSupported {
+		// Legacy adapter implementations do not own a durable admission policy.
+		// The production UserManager always supplies this operation.
+		return true
+	}
+	err := authorizer.AuthorizeSession(ctx, user.Account.ID)
+	return err == nil
 }
 
 func reconcileLoginMembership(

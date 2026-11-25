@@ -3,79 +3,114 @@ package npc
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 )
 
 type status struct {
-	beastVulnerability          BeastVulnerability
-	basicModifiers              map[BasicModifierKey]BasicModifier
-	repairBlockedUntil          time.Time
-	swiftMovementSpeedBuff      float32
-	areaShiftExpiresAt          time.Time
-	absorptionShieldAmount      float32
-	absorptionShieldMaximum     float32
-	absorptionShieldReadyAt     time.Time
-	absorptionShieldRecharge    time.Duration
-	carapaceDamageMaximum       float32
-	banishExpiresAt             time.Time
-	curseExpiresAt              time.Time
-	curseDamage                 CurseDamageProfile
-	damageTakenIncrease         float32
-	damageVulnerabilityOwner    uint32
-	physicalTakenIncrease       float32
-	physicalVulnerabilityEnd    time.Time
-	damageReduction             float32
-	damageReductionEnd          time.Time
-	isDamageFleePending         bool
-	energyTakenIncrease         float32
-	energyVulnerabilityOwner    uint32
-	energyVulnerabilityEnd      time.Time
-	healingReduction            float32
-	healingReductionEnd         time.Time
-	hasteExpiresAt              time.Time
-	hasteAttackSpeed            float32
-	hasteCooldownReduction      float32
-	hasteMovementSpeedBuff      float32
-	hasteActionProfile          ActionProfile
-	isHasteActionKnown          bool
-	isHasteProfileStored        bool
-	energyBuffExpiresAt         time.Time
-	energyDamageIncrease        float32
-	fearExpiresAt               time.Time
-	intangibleExpiresAt         time.Time
-	chargeProtectionEnd         time.Time
-	munchExpiresAt              time.Time
-	munchDamageIncrease         float32
-	munchStack                  uint32
-	passiveDamageIncrease       float32
-	passiveEnrageStack          uint32
-	oozeBaseGraphicsScale       float32
-	oozeBaseMaximumHitPoint     float32
-	oozeGrowthDamageIncrease    float32
-	oozeGrowthStack             uint32
-	oozeGrowthReadyTimestamp    uint64
-	corpseConsumerCount         uint32
-	isCorpseFading              bool
-	isCorpseFadePublished       bool
-	isStealthed                 bool
-	isHauntInitialized          bool
-	rootExpiresAt               time.Time
-	bioEntangleExpiresAt        time.Time
-	bioEntangleInstanceID       uint32
-	supportHealerRootExpiresAt  time.Time
-	supportHealerRootInstanceID uint32
-	silenceExpiresAt            time.Time
-	sleepExpiresAt              time.Time
-	slowExpiresAt               time.Time
-	slowMovementScale           float32
-	slowAttackScale             float32
-	publishedSlowMovementScale  float32
-	stunExpiresAt               time.Time
-	tauntExpiresAt              time.Time
-	tauntTargetObjectID         uint32
+	beastVulnerability           BeastVulnerability
+	basicModifiers               map[BasicModifierKey]BasicModifier
+	repairBlockedUntil           time.Time
+	stealthReadyAt               time.Time
+	swiftMovementSpeedBuff       float32
+	areaShiftExpiresAt           time.Time
+	absorptionShieldAmount       float32
+	absorptionShieldMaximum      float32
+	absorptionShieldReadyAt      time.Time
+	absorptionShieldRecharge     time.Duration
+	carapaceDamageMaximum        float32
+	banishExpiresAt              time.Time
+	banishModifiers              map[uint32]time.Time
+	curseExpiresAt               time.Time
+	curseDamage                  CurseDamageProfile
+	damageTakenIncrease          float32
+	damageVulnerabilityOwner     uint32
+	physicalTakenIncrease        float32
+	physicalVulnerabilityEnd     time.Time
+	damageReduction              float32
+	damageReductionEnd           time.Time
+	verdanthShieldExpiresAt      time.Time
+	isDamageFleePending          bool
+	energyTakenIncrease          float32
+	energyVulnerabilityOwner     uint32
+	energyVulnerabilityEnd       time.Time
+	energyVulnerabilityModifiers map[uint32]energyVulnerabilityModifier
+	healingReduction             float32
+	healingReductionEnd          time.Time
+	hasteExpiresAt               time.Time
+	hasteAttackSpeed             float32
+	hasteCooldownReduction       float32
+	hasteMovementSpeedBuff       float32
+	hasteActionProfile           ActionProfile
+	isHasteActionKnown           bool
+	isHasteProfileStored         bool
+	energyBuffExpiresAt          time.Time
+	energyDamageIncrease         float32
+	fearExpiresAt                time.Time
+	intangibleExpiresAt          time.Time
+	chargeProtectionEnd          time.Time
+	munchExpiresAt               time.Time
+	munchDamageIncrease          float32
+	munchStack                   uint32
+	passiveDamageIncrease        float32
+	passiveEnrageStack           uint32
+	oozeBaseGraphicsScale        float32
+	oozeBaseMaximumHitPoint      float32
+	oozeGrowthDamageIncrease     float32
+	oozeGrowthStack              uint32
+	oozeGrowthReadyTimestamp     uint64
+	corpseConsumerCount          uint32
+	isCorpseFading               bool
+	isCorpseFadePublished        bool
+	isStealthed                  bool
+	isHauntInitialized           bool
+	rootExpiresAt                time.Time
+	rootModifiers                map[uint32]time.Time
+	bioEntangleExpiresAt         time.Time
+	bioEntangleInstanceID        uint32
+	supportHealerRootExpiresAt   time.Time
+	supportHealerRootInstanceID  uint32
+	silenceExpiresAt             time.Time
+	silenceModifiers             map[uint32]time.Time
+	auraSilences                 map[uint32]time.Time
+	sleepExpiresAt               time.Time
+	sleepModifiers               map[uint32]time.Time
+	auraSleeps                   map[uint32]time.Time
+	slowExpiresAt                time.Time
+	slowMovementScale            float32
+	slowAttackScale              float32
+	slowModifiers                map[uint32]slowModifier
+	slowNextOrder                uint64
+	slowOrder                    uint64
+	publishedSlowMovementScale   float32
+	stunExpiresAt                time.Time
+	stunModifiers                map[uint32]time.Time
+	timeStopModifiers            map[uint32]time.Time
+	tauntExpiresAt               time.Time
+	tauntTargetObjectID          uint32
 }
 
 const unstoppableModifierName = "Unstoppable_NPCAffixModifier"
+
+// ClearCorpseStatuses discards live combat state without changing the corpse's
+// consumers, fade lifecycle, encounter identity, or resurrection bookkeeping.
+func (e *Session) ClearCorpseStatuses(objectID uint32) {
+	if e == nil || objectID == 0 {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	corpse, isFound := e.npcs[objectID]
+	if !isFound || !corpse.IsDefeated {
+		return
+	}
+	corpse.status = status{
+		corpseConsumerCount:   corpse.status.corpseConsumerCount,
+		isCorpseFading:        corpse.status.isCorpseFading,
+		isCorpseFadePublished: corpse.status.isCorpseFadePublished,
+	}
+	e.npcs[objectID] = corpse
+}
 
 func (s *Session) HasDebuff(objectID uint32, at time.Time) bool {
 	if s == nil || objectID == 0 || at.IsZero() {
@@ -93,19 +128,19 @@ func (s *Session) HasDebuff(objectID uint32, at time.Time) bool {
 			return true
 		}
 	}
-	return at.Before(status.banishExpiresAt) ||
+	return at.Before(status.banishEnd()) ||
 		at.Before(status.curseExpiresAt) ||
 		status.damageTakenIncrease > 0 ||
 		at.Before(status.physicalVulnerabilityEnd) || at.Before(status.beastVulnerability.ExpiresAt) ||
-		at.Before(status.energyVulnerabilityEnd) ||
+		status.energyVulnerabilityIncrease(at) > 0 ||
 		at.Before(status.healingReductionEnd) ||
 		at.Before(status.fearExpiresAt) ||
 		at.Before(status.intangibleExpiresAt) ||
-		at.Before(status.rootExpiresAt) || at.Before(status.bioEntangleExpiresAt) || at.Before(status.supportHealerRootExpiresAt) ||
-		at.Before(status.silenceExpiresAt) ||
-		at.Before(status.sleepExpiresAt) ||
-		at.Before(status.slowExpiresAt) ||
-		at.Before(status.stunExpiresAt) ||
+		at.Before(status.rootEnd()) || at.Before(status.bioEntangleExpiresAt) || at.Before(status.supportHealerRootExpiresAt) ||
+		at.Before(status.silenceEnd()) ||
+		at.Before(status.sleepEnd()) ||
+		at.Before(status.slowEnd()) ||
+		at.Before(status.stunEnd()) ||
 		at.Before(status.tauntExpiresAt)
 }
 
@@ -120,31 +155,38 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 		return false
 	}
 	status := &npc.status
+	status.basicModifiers = maps.Clone(status.basicModifiers)
 	isBasicPurged := false
 	for key, modifier := range status.basicModifiers {
+		if key.Kind == BasicModifierPummel {
+			isBasicPurged = isBasicPurged || !modifier.ActiveUntil.IsZero()
+			modifier.ActiveUntil = time.Time{}
+			status.basicModifiers[key] = modifier
+		}
 		if modifier.IsDebuff() {
 			delete(status.basicModifiers, key)
 			isBasicPurged = true
 		}
 	}
-	isPurged := !status.banishExpiresAt.IsZero() ||
+	isPurged := !status.banishExpiresAt.IsZero() || len(status.banishModifiers) != 0 ||
 		!status.curseExpiresAt.IsZero() ||
 		status.damageTakenIncrease > 0 ||
 		!status.physicalVulnerabilityEnd.IsZero() || !status.beastVulnerability.ExpiresAt.IsZero() ||
-		!status.energyVulnerabilityEnd.IsZero() ||
+		!status.energyVulnerabilityEnd.IsZero() || len(status.energyVulnerabilityModifiers) != 0 ||
 		!status.healingReductionEnd.IsZero() ||
 		!status.fearExpiresAt.IsZero() ||
 		!status.intangibleExpiresAt.IsZero() ||
-		!status.rootExpiresAt.IsZero() || !status.bioEntangleExpiresAt.IsZero() || !status.supportHealerRootExpiresAt.IsZero() ||
-		!status.silenceExpiresAt.IsZero() ||
-		!status.sleepExpiresAt.IsZero() ||
-		!status.slowExpiresAt.IsZero() ||
-		!status.stunExpiresAt.IsZero() ||
+		!status.rootExpiresAt.IsZero() || len(status.rootModifiers) != 0 || !status.bioEntangleExpiresAt.IsZero() || !status.supportHealerRootExpiresAt.IsZero() ||
+		!status.silenceExpiresAt.IsZero() || len(status.silenceModifiers) != 0 || len(status.auraSilences) != 0 ||
+		!status.sleepExpiresAt.IsZero() || len(status.sleepModifiers) != 0 || len(status.auraSleeps) != 0 ||
+		!status.slowExpiresAt.IsZero() || len(status.slowModifiers) != 0 ||
+		!status.stunExpiresAt.IsZero() || len(status.stunModifiers) != 0 ||
 		!status.tauntExpiresAt.IsZero() || isBasicPurged
 	if !isPurged {
 		return false
 	}
 	status.banishExpiresAt = time.Time{}
+	status.banishModifiers = nil
 	status.curseExpiresAt = time.Time{}
 	status.curseDamage = CurseDamageProfile{}
 	status.damageTakenIncrease = 0
@@ -155,21 +197,30 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 	status.energyTakenIncrease = 0
 	status.energyVulnerabilityOwner = 0
 	status.energyVulnerabilityEnd = time.Time{}
+	status.energyVulnerabilityModifiers = nil
 	status.healingReduction = 0
 	status.healingReductionEnd = time.Time{}
 	status.fearExpiresAt = time.Time{}
 	status.intangibleExpiresAt = time.Time{}
 	status.rootExpiresAt = time.Time{}
+	status.rootModifiers = nil
 	status.bioEntangleExpiresAt = time.Time{}
 	status.bioEntangleInstanceID = 0
 	status.supportHealerRootExpiresAt = time.Time{}
 	status.supportHealerRootInstanceID = 0
 	status.silenceExpiresAt = time.Time{}
+	status.silenceModifiers = nil
+	status.auraSilences = nil
 	status.sleepExpiresAt = time.Time{}
+	status.sleepModifiers = nil
+	status.auraSleeps = nil
 	status.slowExpiresAt = time.Time{}
 	status.slowMovementScale = 0
 	status.slowAttackScale = 0
+	status.slowModifiers = nil
 	status.stunExpiresAt = time.Time{}
+	status.stunModifiers = nil
+	status.timeStopModifiers = nil
 	status.tauntExpiresAt = time.Time{}
 	status.tauntTargetObjectID = 0
 	s.npcs[objectID] = npc
@@ -229,7 +280,7 @@ func (s *Session) ApplyTaunt(
 		npc.Faction == target.Faction {
 		return Snapshot{}, fmt.Errorf("npcTauntMissing: %d", objectID)
 	}
-	if npc.HasAffixModifier(unstoppableModifierName) {
+	if npc.ControlImmunity(time.Now()).Taunt > 0 {
 		return npc, nil
 	}
 	npc.TargetObjectID = target.ObjectID
@@ -345,6 +396,8 @@ func (s *Session) ApplySlow(
 		return fmt.Errorf("npcSlowMissing: %d", objectID)
 	}
 	if npc.status.slowExpiresAt.Before(expiresAt) {
+		npc.status.slowNextOrder++
+		npc.status.slowOrder = npc.status.slowNextOrder
 		npc.status.slowExpiresAt = expiresAt
 		npc.status.slowMovementScale = movementScale
 		npc.status.slowAttackScale = attackScale
@@ -386,14 +439,10 @@ func (s *Session) slowScales(
 	if !isFound || npc.IsDefeated {
 		return SlowScales{Movement: 1, Attack: 1}
 	}
-	movementScale := float32(1)
-	attackScale := float32(1)
-	if at.Before(npc.status.slowExpiresAt) {
-		movementScale = max(float32(0.05), npc.status.slowMovementScale)
-		attackScale = max(float32(0.05), npc.status.slowAttackScale)
-	}
-	movementScale *= areaShiftMovementScale(npc, at)
-	return SlowScales{Movement: max(float32(0.05), movementScale), Attack: attackScale}
+	scales := npc.status.slowProfile(at)
+	scales.Movement *= areaShiftMovementScale(npc, at)
+	scales.Movement = max(float32(0.05), scales.Movement)
+	return scales
 }
 
 func (s *Session) SlowProfile(objectID uint32, at time.Time) (float32, float32) {
@@ -748,7 +797,14 @@ func (s *Session) ClearEnergyDamageVulnerability(
 }
 
 func (s *Session) ApplySilence(objectID uint32, expiresAt time.Time) error {
-	return s.applySimpleStatus(objectID, expiresAt, "silence")
+	isAdmitted, err := s.AdmitSilence(objectID, time.Now(), expiresAt)
+	if err != nil {
+		return fmt.Errorf("silenceAdmission: %w", err)
+	}
+	if !isAdmitted {
+		return nil
+	}
+	return nil
 }
 
 func (s *Session) ClearSilence(objectID uint32, expiresAt time.Time) {
@@ -783,7 +839,8 @@ func (s *Session) applySimpleStatus(
 	if !isFound || npc.IsDefeated {
 		return fmt.Errorf("npcStatusMissing: %d", objectID)
 	}
-	if isStatusBlockedByShield(npc) || npc.HasAffixModifier(unstoppableModifierName) {
+	immunity := npc.ControlImmunity(time.Now())
+	if isStatusBlockedByShield(npc) || kind == "sleep" && immunity.Sleep > 0 || kind == "silence" && immunity.Silence > 0 {
 		return nil
 	}
 	if kind == "silence" {
@@ -849,9 +906,9 @@ func (s *Session) simpleStatusRemaining(
 	expiresAt := time.Time{}
 	switch kind {
 	case "silence":
-		expiresAt = npc.status.silenceExpiresAt
+		expiresAt = npc.status.silenceEnd()
 	case "sleep":
-		expiresAt = npc.status.sleepExpiresAt
+		expiresAt = npc.status.sleepEnd()
 	}
 	if !at.Before(expiresAt) {
 		return 0
@@ -905,10 +962,10 @@ func (s *Session) RootRemaining(objectID uint32, at time.Time) time.Duration {
 	}
 	cinematicRemaining := max(time.Duration(0), npc.cinematic.immobilizedUntil.Sub(at))
 	if isStatusBlockedByShield(npc) ||
-		!at.Before(npc.status.rootExpiresAt) && !at.Before(npc.status.bioEntangleExpiresAt) && !at.Before(npc.status.supportHealerRootExpiresAt) {
+		!at.Before(npc.status.rootEnd()) && !at.Before(npc.status.bioEntangleExpiresAt) && !at.Before(npc.status.supportHealerRootExpiresAt) {
 		return cinematicRemaining
 	}
-	expiresAt := npc.status.rootExpiresAt
+	expiresAt := npc.status.rootEnd()
 	if expiresAt.Before(npc.status.bioEntangleExpiresAt) {
 		expiresAt = npc.status.bioEntangleExpiresAt
 	}
@@ -936,7 +993,7 @@ func (s *Session) AdmitBanish(objectID uint32, at, expiresAt time.Time) (bool, e
 	if !isFound || npc.IsDefeated {
 		return false, fmt.Errorf("npcBanishMissing: %d", objectID)
 	}
-	if npc.IsMutationBanishImmune() || isStatusBlockedByShield(npc) || at.Before(npc.status.banishExpiresAt) ||
+	if npc.IsMutationBanishImmune() || npc.ControlImmunity(at).Banish > 0 || isStatusBlockedByShield(npc) || at.Before(npc.status.banishEnd()) ||
 		at.Before(npc.status.intangibleExpiresAt) {
 		return false, nil
 	}
@@ -956,7 +1013,7 @@ func (s *Session) ApplyBanish(objectID uint32, expiresAt time.Time) error {
 	if !isFound || npc.IsDefeated {
 		return fmt.Errorf("npcBanishMissing: %d", objectID)
 	}
-	if npc.IsMutationBanishImmune() || isStatusBlockedByShield(npc) {
+	if npc.IsMutationBanishImmune() || npc.ControlImmunity(time.Now()).Banish > 0 || isStatusBlockedByShield(npc) {
 		return nil
 	}
 	endDirectionalShield(&npc)
@@ -989,30 +1046,20 @@ func (s *Session) BanishRemaining(objectID uint32, at time.Time) time.Duration {
 	defer s.mu.RUnlock()
 	npc, isFound := s.npcs[objectID]
 	if !isFound || npc.IsDefeated || isStatusBlockedByShield(npc) ||
-		!at.Before(npc.status.banishExpiresAt) {
+		!at.Before(npc.status.banishEnd()) {
 		return 0
 	}
-	return npc.status.banishExpiresAt.Sub(at)
+	return npc.status.banishEnd().Sub(at)
 }
 
 func (s *Session) ApplyStun(objectID uint32, expiresAt time.Time) error {
-	if s == nil || objectID == 0 || expiresAt.IsZero() {
-		return errors.New("invalid npc stun")
+	isAdmitted, err := s.AdmitStun(objectID, time.Now(), expiresAt)
+	if err != nil {
+		return fmt.Errorf("stunAdmission: %w", err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	npc, isFound := s.npcs[objectID]
-	if !isFound || npc.IsDefeated {
-		return fmt.Errorf("npcStunMissing: %d", objectID)
-	}
-	if isStatusBlockedByShield(npc) || npc.HasAffixModifier(unstoppableModifierName) {
+	if !isAdmitted {
 		return nil
 	}
-	endDirectionalShield(&npc)
-	if npc.status.stunExpiresAt.Before(expiresAt) {
-		npc.status.stunExpiresAt = expiresAt
-	}
-	s.npcs[objectID] = npc
 	return nil
 }
 
@@ -1033,12 +1080,13 @@ func (s *Session) StunRemaining(objectID uint32, at time.Time) time.Duration {
 	if isStatusBlockedByShield(npc) {
 		return transformRemaining
 	}
-	expiresAt := npc.status.stunExpiresAt
-	if expiresAt.Before(npc.status.banishExpiresAt) {
-		expiresAt = npc.status.banishExpiresAt
+	expiresAt := npc.status.stunEnd()
+	if expiresAt.Before(npc.status.banishEnd()) {
+		expiresAt = npc.status.banishEnd()
 	}
-	if expiresAt.Before(npc.status.sleepExpiresAt) {
-		expiresAt = npc.status.sleepExpiresAt
+	sleepEnd := npc.status.sleepEnd()
+	if expiresAt.Before(sleepEnd) {
+		expiresAt = sleepEnd
 	}
 	if !at.Before(expiresAt) {
 		return transformRemaining
@@ -1070,7 +1118,7 @@ func (s *Session) ApplyFear(objectID uint32, expiresAt time.Time) error {
 	if !isFound || npc.IsDefeated {
 		return fmt.Errorf("npcFearMissing: %d", objectID)
 	}
-	if isStatusBlockedByShield(npc) || npc.HasAffixModifier(unstoppableModifierName) {
+	if isStatusBlockedByShield(npc) || npc.ControlImmunity(time.Now()).Fear > 0 {
 		return nil
 	}
 	if npc.status.fearExpiresAt.Before(expiresAt) {

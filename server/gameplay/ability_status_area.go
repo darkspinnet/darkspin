@@ -62,15 +62,15 @@ func (e *heroStatusAreaRun) Cleanup() []heroStatusAreaTarget {
 	for _, target := range targets {
 		switch target.kind {
 		case sim.AbilityStatusKindBanish:
-			e.npc.ClearBanish(target.objectID, target.expiresAt)
+			e.npc.ClearBanishModifier(target.objectID, target.instanceID)
 		case sim.AbilityStatusKindCurse:
 			e.npc.ClearCurse(target.objectID, target.expiresAt)
 		case sim.AbilityStatusKindSlow:
-			e.npc.ClearSlow(target.objectID, target.expiresAt)
+			e.npc.ClearSlowModifier(target.objectID, target.instanceID)
 		case sim.AbilityStatusKindStun:
-			e.npc.ClearStun(target.objectID, target.expiresAt)
+			e.npc.ClearStunModifier(target.objectID, target.instanceID)
 		case sim.AbilityStatusKindSilence:
-			e.npc.ClearSilence(target.objectID, target.expiresAt)
+			e.npc.ClearSilenceModifier(target.objectID, target.instanceID)
 		case sim.AbilityStatusKindPhysicalVulnerability:
 			e.npc.ClearPhysicalDamageVulnerability(
 				target.objectID, target.expiresAt,
@@ -137,29 +137,50 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 			duration = zonenpc.CrowdControlDuration(target.Plan, duration)
 		}
 		expiresAt := r.now().Add(duration)
-		err := applyAcceptedHitNPCStatus(
-			run.npc, targetObjectID, expiresAt, definition,
-		)
-		if err != nil {
-			r.registry.mutex.Unlock()
-			run.Stop()
-			return nil, fmt.Errorf("hitStatusApply[%d]: %w", index, err)
-		}
 		instanceID, err := r.modifierPool.Allocate()
 		if err != nil {
 			r.registry.mutex.Unlock()
 			run.Stop()
 			return nil, fmt.Errorf("hitStatusModifier[%d]: %w", index, err)
 		}
+		reaction := laserModifierReaction{}
+		isAdmitted := true
+		isLaserControl := definition.StatusKind == sim.AbilityStatusKindStun || definition.StatusKind == sim.AbilityStatusKindSilence
+		if isLaserControl {
+			reaction, isAdmitted, err = r.registry.admitLaserControlModifierLocked(&peerSession,
+				targetObjectID, instanceID, definition.StatusKind, r.now(), expiresAt)
+		} else {
+			err = applyAcceptedHitNPCStatus(run.npc, targetObjectID, instanceID, expiresAt, definition)
+		}
+		if err != nil {
+			releaseErr := r.modifierPool.Release(instanceID)
+			r.registry.mutex.Unlock()
+			run.Stop()
+			return nil, fmt.Errorf("hitStatusApply[%d]: %w", index, errors.Join(err, releaseErr))
+		}
+		if !isAdmitted {
+			releaseErr := r.modifierPool.Release(instanceID)
+			if releaseErr != nil {
+				r.registry.mutex.Unlock()
+				run.Stop()
+				return nil, fmt.Errorf("hitStatusRejectedRelease: %w", releaseErr)
+			}
+			continue
+		}
 		target := heroStatusAreaTarget{
 			objectID: targetObjectID, instanceID: instanceID,
 			expiresAt: expiresAt, kind: definition.StatusKind,
 		}
 		if !run.Add(target) {
-			_ = r.modifierPool.Release(instanceID)
 			clearAcceptedHitNPCStatus(
-				run.npc, targetObjectID, expiresAt, definition.StatusKind,
+				run.npc, targetObjectID, instanceID, expiresAt, definition.StatusKind,
 			)
+			releaseErr := r.modifierPool.Release(instanceID)
+			if releaseErr != nil {
+				r.registry.mutex.Unlock()
+				run.Stop()
+				return nil, fmt.Errorf("stoppedRelease: %w", releaseErr)
+			}
 			continue
 		}
 		messages = append(messages, raknet.ModifierCreatedMessage{
@@ -169,6 +190,9 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 			StackCount:           1, StartMilliseconds: hitTimestamp, NPCAffixAssetID: 0,
 			IsBound: definition.StatusKind == sim.AbilityStatusKindStun,
 		})
+		if isLaserControl {
+			r.registry.queueLaserControlReactionLocked(sessionKey, &peerSession, reaction)
+		}
 	}
 	if len(messages) == 0 {
 		r.registry.mutex.Unlock()
@@ -219,19 +243,15 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 }
 
 func applyAcceptedHitNPCStatus(
-	npc *zonenpc.Session, objectID uint32, expiresAt time.Time,
+	npc *zonenpc.Session, objectID, instanceID uint32, expiresAt time.Time,
 	definition sim.AbilityDefinition,
 ) error {
 	switch definition.StatusKind {
 	case sim.AbilityStatusKindSlow:
-		return npc.ApplySlow(
-			objectID, expiresAt,
+		return npc.ApplySlowModifier(
+			objectID, instanceID, expiresAt,
 			definition.StatusMovementScale, definition.StatusAttackScale,
 		)
-	case sim.AbilityStatusKindStun:
-		return npc.ApplyStun(objectID, expiresAt)
-	case sim.AbilityStatusKindSilence:
-		return npc.ApplySilence(objectID, expiresAt)
 	case sim.AbilityStatusKindPhysicalVulnerability:
 		return npc.ApplyPhysicalDamageVulnerability(
 			objectID, definition.StatusPhysicalIncrease, expiresAt,
@@ -242,16 +262,16 @@ func applyAcceptedHitNPCStatus(
 }
 
 func clearAcceptedHitNPCStatus(
-	npc *zonenpc.Session, objectID uint32, expiresAt time.Time,
+	npc *zonenpc.Session, objectID, instanceID uint32, expiresAt time.Time,
 	statusKind sim.AbilityStatusKind,
 ) {
 	switch statusKind {
 	case sim.AbilityStatusKindSlow:
-		npc.ClearSlow(objectID, expiresAt)
+		npc.ClearSlowModifier(objectID, instanceID)
 	case sim.AbilityStatusKindStun:
-		npc.ClearStun(objectID, expiresAt)
+		npc.ClearStunModifier(objectID, instanceID)
 	case sim.AbilityStatusKindSilence:
-		npc.ClearSilence(objectID, expiresAt)
+		npc.ClearSilenceModifier(objectID, instanceID)
 	case sim.AbilityStatusKindPhysicalVulnerability:
 		npc.ClearPhysicalDamageVulnerability(objectID, expiresAt)
 	}
@@ -352,14 +372,24 @@ func (e heroStatusAreaSchedule) apply() ([][]byte, error) {
 			duration = zonenpc.CrowdControlDuration(target.Plan, duration)
 		}
 		expiresAt := e.runtime.now().Add(duration)
-		var err error
+		instanceID, err := e.runtime.modifierPool.Allocate()
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("statusAreaModifier[%d]: %w", index, err)
+		}
+		reaction := laserModifierReaction{}
 		switch e.definition.StatusKind {
 		case sim.AbilityStatusKindBanish:
 			var isAdmitted bool
-			isAdmitted, err = peerSession.zone.NPCs().AdmitBanish(
-				target.Plan.ObjectID, e.runtime.now(), expiresAt,
+			reaction, isAdmitted, err = e.runtime.registry.admitLaserControlModifierLocked(
+				&peerSession, target.Plan.ObjectID, instanceID, sim.AbilityStatusKindBanish, e.runtime.now(), expiresAt,
 			)
 			if err == nil && !isAdmitted {
+				releaseErr := e.runtime.modifierPool.Release(instanceID)
+				if releaseErr != nil {
+					e.runtime.registry.mutex.Unlock()
+					return nil, fmt.Errorf("deniedRelease: %w", releaseErr)
+				}
 				continue
 			}
 		case sim.AbilityStatusKindCurse:
@@ -374,8 +404,9 @@ func (e heroStatusAreaSchedule) apply() ([][]byte, error) {
 			err = errors.New("unsupported status kind")
 		}
 		if err != nil {
+			releaseErr := e.runtime.modifierPool.Release(instanceID)
 			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("statusAreaBanish[%d]: %w", index, err)
+			return nil, fmt.Errorf("statusAreaBanish[%d]: %w", index, errors.Join(err, releaseErr))
 		}
 		remaining := time.Duration(0)
 		switch e.definition.StatusKind {
@@ -389,24 +420,28 @@ func (e heroStatusAreaSchedule) apply() ([][]byte, error) {
 			)
 		}
 		if remaining == 0 {
+			releaseErr := e.runtime.modifierPool.Release(instanceID)
+			if releaseErr != nil {
+				e.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("inactiveRelease: %w", releaseErr)
+			}
 			continue
-		}
-		instanceID, allocateErr := e.runtime.modifierPool.Allocate()
-		if allocateErr != nil {
-			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("statusAreaModifier[%d]: %w", index, allocateErr)
 		}
 		tracked := heroStatusAreaTarget{
 			objectID: target.Plan.ObjectID, instanceID: instanceID,
 			expiresAt: expiresAt, kind: e.definition.StatusKind,
 		}
 		if !e.run.Add(tracked) {
-			_ = e.runtime.modifierPool.Release(instanceID)
 			switch e.definition.StatusKind {
 			case sim.AbilityStatusKindBanish:
-				peerSession.zone.NPCs().ClearBanish(target.Plan.ObjectID, expiresAt)
+				peerSession.zone.NPCs().ClearBanishModifier(target.Plan.ObjectID, instanceID)
 			case sim.AbilityStatusKindCurse:
 				peerSession.zone.NPCs().ClearCurse(target.Plan.ObjectID, expiresAt)
+			}
+			releaseErr := e.runtime.modifierPool.Release(instanceID)
+			if releaseErr != nil {
+				e.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("stoppedRelease: %w", releaseErr)
 			}
 			continue
 		}
@@ -419,6 +454,9 @@ func (e heroStatusAreaSchedule) apply() ([][]byte, error) {
 				uint64(e.definition.HitDelay/time.Millisecond),
 			NPCAffixAssetID: 0,
 		})
+		if e.definition.StatusKind == sim.AbilityStatusKindBanish {
+			e.runtime.registry.queueLaserControlReactionLocked(e.sessionKey, &peerSession, reaction)
+		}
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()

@@ -26,11 +26,7 @@ func (e EquipmentStore) EquipmentCapacity(ctx context.Context, userID uint64) (u
 func (e EquipmentStore) CommitEquipment(ctx context.Context, req loot.EquipmentCompletion) error {
 	parts := make([]storage.Part, 0, len(req.Inventory.Equipments))
 	for _, equipment := range req.Inventory.Equipments {
-		parts = append(parts, storage.Part{
-			RigblockAssetID: equipment.RigblockID, PrefixAssetID: equipment.PrefixID,
-			PrefixSecondaryAssetID: equipment.SecondaryPrefixID, SuffixAssetID: equipment.SuffixID,
-			Level: equipment.Level, Rarity: storage.PartRarity(equipment.Rarity), Cost: equipment.Cost,
-		})
+		parts = append(parts, Part(equipment))
 	}
 	err := e.Progression.CommitMissionLoot(ctx, int64(req.Inventory.UserID), storage.MissionLoot{
 		CompletionID: req.CompletionID, Parts: parts,
@@ -50,6 +46,7 @@ func MissionEquipment(objectID uint32, part storage.Part) loot.Equipment {
 		ObjectID: objectID, RigblockID: part.RigblockAssetID, PrefixID: part.PrefixAssetID,
 		SecondaryPrefixID: part.PrefixSecondaryAssetID, SuffixID: part.SuffixAssetID,
 		Level: part.Level, Rarity: uint8(part.Rarity), Cost: part.Cost,
+		IsDetail: part.Status == storage.PartStatusDetail,
 	}
 }
 
@@ -58,6 +55,9 @@ func Part(equipment loot.Equipment) storage.Part {
 		RigblockAssetID: equipment.RigblockID, PrefixAssetID: equipment.PrefixID,
 		PrefixSecondaryAssetID: equipment.SecondaryPrefixID, SuffixAssetID: equipment.SuffixID,
 		Level: equipment.Level, Rarity: storage.PartRarity(equipment.Rarity), Cost: equipment.Cost,
+	}
+	if equipment.IsDetail {
+		part.Status = storage.PartStatusDetail
 	}
 	part.Normalize()
 	return part

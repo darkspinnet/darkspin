@@ -121,6 +121,7 @@ func InspectBundle(ctx context.Context, req InspectRequest) (BundleInspection, e
 	}
 	analysisRequest := dumpRequest{
 		Actor: metadata.Actor, Trigger: metadata.Trigger, Context: metadata.Context,
+		Category:    metadata.Category,
 		Fingerprint: metadata.Fingerprint, ObjectID: metadata.ObjectID,
 		Movements: movements,
 	}

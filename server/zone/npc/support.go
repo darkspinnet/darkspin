@@ -37,7 +37,11 @@ func SupportSpells(plan SpawnPlan) []SupportSpell {
 		burn.AnimationName = "nomad_lieu_el_2_burningDOT_cast"
 		burn.HitDelay, burn.ReleaseDelay, burn.Cooldown = 366666675*time.Nanosecond, 1933333039*time.Nanosecond, 4*time.Second
 		burn.ModifierDuration = [...]time.Duration{6 * time.Second, 8 * time.Second, 10 * time.Second}[index]
-		burn.ModifierTickDuration, burn.ModifierTickDamage, burn.ModifierMaximumStack = 2*time.Second, 4, 1
+		burn.ModifierTickDuration, burn.ModifierMaximumStack = 2*time.Second, 1
+		// ScopeBurn inherits DOT template 149's coefficient and initiator
+		// snapshot. A raw tick scalar bypasses Mind and difficulty scaling.
+		burn.ModifierMinimumTickDamage, burn.ModifierMaximumTickDamage = 4, 4
+		burn.ModifierTickDamageCoefficient = 0.05
 		burn.ModifierDescriptorMask, burn.ModifierDamageType, burn.ModifierDamageSource = 1<<2|1<<5|1<<7, 3, 1
 		burn.IsModifierDamageProfileKnown = true
 		burn.ImpactEffectName = "nomad_lieu_el_2_scope_fire_burningDOT_hit_effect.ServerEventDef"

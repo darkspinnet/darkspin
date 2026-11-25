@@ -993,6 +993,7 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 		},
 		"LightspeedTempestActive": {
 			Name: "LightspeedTempestActive", Kind: sim.AbilityKindCursorArea,
+			Cooldown: 8 * time.Second, ManaCost: 18, ManaCoefficient: 0.09,
 			Range: 35, Radius: 7,
 			AnimationName: "lightspeedtempest_active",
 			HitDelay:      100 * time.Millisecond,
@@ -1500,6 +1501,50 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 	if interactHealthObelisk.Kind != sim.AbilityKindInteractable || !interactHealthObelisk.IsOrbDrop {
 		return zonecontent.Programs{}, fmt.Errorf("interactHealthObeliskKind: %#v", interactHealthObelisk)
 	}
+	auraUtils, err := loadPinnedLuaBytecode(ctx, store, 739,
+		"f799492be501ad2374fa169c872b641c0f7246ec7ee23997397ea8841a0c68af", "auraUtils")
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("auraLoad: %w", err)
+	}
+	sleepingCloud, err := loadPinnedLuaBytecode(ctx, store, 398,
+		"fa0c17925d8d59177b1d99f7cbaaf9aa2c5309e03885f42e314e338dd45ecaab", "sleepingCloud")
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("sleepLoad: %w", err)
+	}
+	sleepModifier, err := sim.NewLuaSleepingCloudModifier(sleepingCloud)
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("sleepCallback: %w", err)
+	}
+	sleepModifier.Stop()
+	sleepAbility, err := sim.NewLuaSleepingCloudAbility(sleepingCloud)
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("sleepEvent: %w", err)
+	}
+	sleepAbility.Stop()
+	psistorm, err := loadPinnedLuaBytecode(ctx, store, 425,
+		"1507dd076b52ab6752e14e4c0974f825bc6d5acb19fc262b3acf15b61318dafd", "psistorm")
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("psistormLoad: %w", err)
+	}
+	psistormModifier, err := sim.NewLuaPsistormModifier(psistorm)
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("psistormCallback: %w", err)
+	}
+	psistormModifier.Stop()
+	strafe, err := loadStrafeLua(ctx, store, 427,
+		"fd987598a7a920cf852639d20143f2c378c67f48627fceaa6d683030b8eca22d")
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("strafeLoad: %w", err)
+	}
+	smallStrafe, err := loadStrafeLua(ctx, store, 481,
+		"d0610a6729bd8f2cf3fddb3fe42a66fe8808eb531b8499fe4c0d998b77c0e221")
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("smallStrafeLoad: %w", err)
+	}
+	fieldMedicHealthContribution, err := loadFieldMedicHealthContribution(ctx, store)
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("fieldMedicHealth: %w", err)
+	}
 	securityTeleporter, err := loadPinnedLuaBytecode(
 		ctx, store, zoneteleport.SecurityChunkID, zoneteleport.SecuritySHA256,
 		"securityTeleporter",
@@ -1742,61 +1787,67 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		objectiveInput = append(objectiveInput, loadedInput)
 	}
 	return zonecontent.Programs{
-		ChainLevel:                 chainLevel,
-		ArenaLevels:                arenaLevels,
-		Critical:                   critical,
-		Difficulty:                 difficulty,
-		PlayerBasicAbility:         playerBasicAbility,
-		PlayerBasicUnsupported:     playerBasicUnsupported,
-		HeroKits:                   heroKits,
-		NonPlayerHitPoint:          nonPlayerHitPoint,
-		NonPlayerDefenses:          nonPlayerDefenses,
-		NonPlayerAggroRanges:       nonPlayerAggroRanges,
-		NonPlayerCritical:          nonPlayerCritical,
-		NounPhysics:                nounPhysics,
-		NounPhysicsByID:            nounPhysicsByID,
-		NavigationFootprintsByNoun: navigationFootprintsByNoun,
-		SpawnExtentsByNoun:         spawnExtentsByNoun,
-		NPCDeathAnimations:         npcDeathAnimations,
-		ProjectileHalfExtent:       projectileHalfExtent,
-		QuadraFirstAggro:           program,
-		LightningBasic:             lightningBasic,
-		ElectronSphere:             electronSphere,
-		SupportHealerBasic:         supportHealerBasic,
-		SupportHealerPassive:       supportHealerPassiveDefinition,
-		SupportHealerPetBasic:      supportHealerPetBasic,
-		SupportHealerPetAggroRange: supportHealerPetAggroRange,
-		SentryDroneLaser:           sentryDroneLaser,
-		NomadDroneLaser:            nomadDroneLaser,
-		FireTempestPetBasic:        fireTempestPetBasic,
-		BeastPetBasic:              beastPetBasic,
-		PlasmaSentinelPetBasic:     plasmaSentinelPetBasic,
-		PoisonMelee:                poisonMelee,
-		PoisonCloud:                poisonCloud,
-		PlasmaLightning:            plasmaLightning,
-		TailZap:                    tailZap,
-		BurstShot:                  burstShot,
-		InteractWithObelisk:        interactWithObelisk,
-		InteractHealthObelisk:      interactHealthObelisk,
-		SecurityTeleporter:         securityTeleporter,
-		TeleporterModifier:         teleporterModifier,
-		BossTeleporter:             bossTeleporter,
-		InvisibleBehavior:          invisibleLifecycle,
-		SpawnModifier:              spawnLifecycle,
-		SoloSupportUnlock:          soloSupportUnlock,
-		SupportUnlock:              supportUnlock,
-		OverdriveUnlock:            overdriveUnlock,
-		CatalystUnlock:             catalystUnlock,
-		CrystalPickup:              crystalPickup,
-		ObjectiveInitializers:      objectiveInitializers,
-		ObjectiveInput:             objectiveInput,
-		CrystalDefinitions:         crystalDefinitions,
-		CrystalEffectsByNoun:       crystalEffectsByNoun,
-		CrystalLevelOffsets:        crystalLevelOffsets,
-		CrystalLineBonusPercent:    crystalTuning.ThreeInARowBonusPercent,
-		CrystalMinorStageCount:     rewardTuning.Progression.MinorStageCount,
-		EliteRewardBonus:           rewardTuning.EliteRewardBonus,
-		TutorialMajorStageCount:    rewardTuning.Progression.MajorStageCount,
+		ChainLevel:                   chainLevel,
+		ArenaLevels:                  arenaLevels,
+		Critical:                     critical,
+		Difficulty:                   difficulty,
+		PlayerBasicAbility:           playerBasicAbility,
+		PlayerBasicUnsupported:       playerBasicUnsupported,
+		HeroKits:                     heroKits,
+		NonPlayerHitPoint:            nonPlayerHitPoint,
+		NonPlayerDefenses:            nonPlayerDefenses,
+		NonPlayerAggroRanges:         nonPlayerAggroRanges,
+		NonPlayerCritical:            nonPlayerCritical,
+		NounPhysics:                  nounPhysics,
+		NounPhysicsByID:              nounPhysicsByID,
+		NavigationFootprintsByNoun:   navigationFootprintsByNoun,
+		SpawnExtentsByNoun:           spawnExtentsByNoun,
+		NPCDeathAnimations:           npcDeathAnimations,
+		ProjectileHalfExtent:         projectileHalfExtent,
+		QuadraFirstAggro:             program,
+		LightningBasic:               lightningBasic,
+		ElectronSphere:               electronSphere,
+		SupportHealerBasic:           supportHealerBasic,
+		SupportHealerPassive:         supportHealerPassiveDefinition,
+		SupportHealerPetBasic:        supportHealerPetBasic,
+		SupportHealerPetAggroRange:   supportHealerPetAggroRange,
+		SentryDroneLaser:             sentryDroneLaser,
+		NomadDroneLaser:              nomadDroneLaser,
+		FireTempestPetBasic:          fireTempestPetBasic,
+		BeastPetBasic:                beastPetBasic,
+		PlasmaSentinelPetBasic:       plasmaSentinelPetBasic,
+		PoisonMelee:                  poisonMelee,
+		PoisonCloud:                  poisonCloud,
+		PlasmaLightning:              plasmaLightning,
+		TailZap:                      tailZap,
+		BurstShot:                    burstShot,
+		InteractWithObelisk:          interactWithObelisk,
+		InteractHealthObelisk:        interactHealthObelisk,
+		SecurityTeleporter:           securityTeleporter,
+		AuraUtils:                    auraUtils,
+		SleepingCloud:                sleepingCloud,
+		Psistorm:                     psistorm,
+		Strafe:                       strafe,
+		SmallStrafe:                  smallStrafe,
+		FieldMedicHealthContribution: fieldMedicHealthContribution,
+		TeleporterModifier:           teleporterModifier,
+		BossTeleporter:               bossTeleporter,
+		InvisibleBehavior:            invisibleLifecycle,
+		SpawnModifier:                spawnLifecycle,
+		SoloSupportUnlock:            soloSupportUnlock,
+		SupportUnlock:                supportUnlock,
+		OverdriveUnlock:              overdriveUnlock,
+		CatalystUnlock:               catalystUnlock,
+		CrystalPickup:                crystalPickup,
+		ObjectiveInitializers:        objectiveInitializers,
+		ObjectiveInput:               objectiveInput,
+		CrystalDefinitions:           crystalDefinitions,
+		CrystalEffectsByNoun:         crystalEffectsByNoun,
+		CrystalLevelOffsets:          crystalLevelOffsets,
+		CrystalLineBonusPercent:      crystalTuning.ThreeInARowBonusPercent,
+		CrystalMinorStageCount:       rewardTuning.Progression.MinorStageCount,
+		EliteRewardBonus:             rewardTuning.EliteRewardBonus,
+		TutorialMajorStageCount:      rewardTuning.Progression.MajorStageCount,
 		IntroAbilitySecond: zonecontent.MarkerProgram{
 			Program: abilitySecondProgram,
 			Trigger: sim.MarkerTrigger{

@@ -61,8 +61,18 @@ func (e *Session) MotionSnapshots(at time.Time) []MotionSnapshot {
 		actor.Position = actor.PositionAt(at)
 		snapshot := MotionSnapshot{Actor: actor}
 		if actor.IsFollowing && at.Before(actor.followDeadline) {
-			snapshot.MovementSpeed = actor.followPlan.Destination.Sub(actor.followPlan.Position).Length() /
+			travelDistance := actor.followPlan.Destination.Sub(actor.followPlan.Position).Length()
+			if len(actor.followPaths) != 0 {
+				travelDistance = walkingDistance(actor.followPaths, e.navigationMesh)
+			}
+			snapshot.MovementSpeed = travelDistance /
 				float32(actor.followPlan.TravelDuration.Seconds())
+			if travelDistance == 0 {
+				snapshot.MovementSpeed = CompatibilityMovementSpeed * movementScale(actor)
+				if actor.MovementSpeed > 0 {
+					snapshot.MovementSpeed = actor.MovementSpeed * movementScale(actor)
+				}
+			}
 			snapshot.Follow = actor.followPlan
 			snapshot.Follow.Position = actor.Position
 			snapshot.Follow.TravelDuration = actor.followDeadline.Sub(at)
@@ -83,6 +93,10 @@ func (e *Actor) followPosition(at time.Time) game.Vec3 {
 	if !at.After(e.followStartedAt) {
 		return e.followPlan.Position
 	}
+	if len(e.followPaths) != 0 {
+		sample := e.walkingPosition(e.followPaths, walkingFraction(e.followStartedAt, e.followDeadline, at))
+		return sample.position
+	}
 	if !at.Before(e.followDeadline) {
 		return e.followPlan.Destination
 	}
@@ -94,6 +108,7 @@ func (e *Actor) followPosition(at time.Time) game.Vec3 {
 }
 
 func (e *Actor) clearFollow() {
+	e.followPaths = nil
 	e.IsFollowing = false
 	e.followPlan = Follow{}
 	e.followStartedAt = time.Time{}

@@ -125,7 +125,7 @@ func runLuaAudit(ctx context.Context, output io.Writer, configPath string) (resu
 	if err != nil {
 		return fmt.Errorf("configStat: %w", err)
 	}
-	config, isConfigCreated, err := game.LoadConfig(absoluteConfigPath)
+	config, isConfigCreated, err := loadToolConfiguration(absoluteConfigPath)
 	if err != nil {
 		return fmt.Errorf("configLoad: %w", err)
 	}

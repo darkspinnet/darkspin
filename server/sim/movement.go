@@ -130,6 +130,18 @@ func (e *LinearMovement) segmentGoal() Position {
 	return e.goal
 }
 
+// RemainingPath copies the retained corners in travel order, including the
+// final goal, so collision observers can inspect each segment independently.
+func (e *LinearMovement) RemainingPath() []Position {
+	if e == nil || !e.isMoving {
+		return nil
+	}
+	if len(e.waypoints) > 0 {
+		return append([]Position(nil), e.waypoints...)
+	}
+	return []Position{e.goal}
+}
+
 // Clone keeps rollback snapshots independent of future path consumption.
 func (e *LinearMovement) Clone() *LinearMovement {
 	if e == nil {

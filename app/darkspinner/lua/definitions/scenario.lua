@@ -35,6 +35,35 @@ function scenario.Sleep(duration_ms) end
 ---@return ScenarioError|nil err
 function scenario.Log(message) end
 
+---Starts process-wide CPU, heap-baseline, mutex and block profiling for this
+---owned scenario. Only one profile can be active; labels use capture-name rules.
+---The server's goroutines carry darkspin.component=server CPU labels; launcher,
+---Lua and capture overhead remain present in the whole-process profiles.
+---@param label string
+---@return ScenarioProfileCapture|nil result
+---@return ScenarioError|nil err
+function scenario.ProfileStart(label) end
+
+---Stops profiling and writes cpu/heap/block/mutex/goroutine .pprof files and
+---summary.json beneath the run's profiles directory. Automatic on script exit,
+---including failure/cancellation. Heap/alloc and contention comparisons should
+---subtract the corresponding *-before.pprof baseline between repeated phases.
+---@return ScenarioProfileCapture|nil result
+---@return ScenarioError|nil err
+function scenario.ProfileStop() end
+
+---@class ScenarioProfileCapture
+---@field label string
+---@field directory string
+---@field process_id integer
+---@field duration_ms integer
+---@field allocated_bytes integer
+---@field allocated_objects integer
+---@field live_bytes_before integer
+---@field live_bytes_after integer
+---@field gc_count integer
+---@field gc_pause_ns integer
+
 ---@return SessionSnapshot|nil result
 ---@return ScenarioError|nil err
 function scenario.Snapshot() end

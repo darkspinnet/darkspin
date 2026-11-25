@@ -22,9 +22,7 @@ func (e gameplayPeerSession) prepareSoulLinkDamage(
 	damage float32,
 ) (soulLinkDistribution, error) {
 	distribution := soulLinkDistribution{activeDamage: damage}
-	if damage <= 0 || e.squad == nil || e.heroModifierRun == nil ||
-		!e.heroModifierRun.isSoulLink ||
-		e.heroModifierRun.creatureIndex != e.deployedCreatureIndex {
+	if damage <= 0 || e.squad == nil || !e.hasSoulLinkModifier() {
 		return distribution, nil
 	}
 	livingCount := e.squad.LivingCount()

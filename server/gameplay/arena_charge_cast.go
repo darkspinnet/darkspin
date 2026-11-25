@@ -61,14 +61,19 @@ func (e campaignAbilityCommandRuntime) handleArenaHeroCharge(
 		position = command.Ability.TargetPosition
 	}
 	var beastTarget zonenpc.Snapshot
+	targetObjectID := command.Ability.TargetID
 	if isBeast || isRoar {
 		targets := e.registry.abilityTargetsLocked(e, source, definition, packet.SourceTime).(*arenaAbilityTargets)
 		beastTarget, isFound = targets.NPC(command.Ability.TargetID)
-		if !isFound {
+		if !isFound && isRoar {
 			e.registry.mutex.Unlock()
 			return e.rejectArenaCharacter(command, "Arena charge target unavailable")
 		}
-		position = raknet.Vector3(beastTarget.Plan.Position)
+		if isFound {
+			position = raknet.Vector3(beastTarget.Plan.Position)
+		} else {
+			targetObjectID = 0
+		}
 	}
 	creature := e.registry.projectPassiveCreature(source, source.deployedCreatureIndex, startedAt)
 	projected, err := zoneability.ProjectTiming(creature, definition)
@@ -95,8 +100,11 @@ func (e campaignAbilityCommandRuntime) handleArenaHeroCharge(
 	if isRush || isRoar {
 		destination = chargeDestination(source.playerPosition, position, projected.Distance)
 	} else if isBeast {
-		stopDistance := source.deployedCampaignActorFootprintRadius() +
-			max(float32(0.5), beastTarget.Plan.ActorFootprintRadius()) + 0.2
+		stopDistance := source.deployedCampaignActorFootprintRadius() * 0.5
+		if targetObjectID != 0 {
+			stopDistance = source.deployedCampaignActorFootprintRadius() +
+				max(float32(0.5), beastTarget.Plan.ActorFootprintRadius()) + 0.2
+		}
 		destination = chargeDestination(source.playerPosition, position, stopDistance)
 	}
 	err = zonenavigation.ValidateMovement(match.navigation, game.Vec3(source.playerPosition),
@@ -240,7 +248,7 @@ func (e campaignAbilityCommandRuntime) handleArenaHeroCharge(
 	run := &arenaHeroChargeRun{runtime: e, packet: packet, world: world,
 		sessionKey: sessionKey, gameID: source.binding.GameID, generation: source.generation,
 		objectID: command.Common.ObjectID, abilityID: abilityID, start: source.playerPosition, destination: destination,
-		targetPosition: position, targetObjectID: command.Ability.TargetID,
+		targetPosition: position, targetObjectID: targetObjectID,
 		creature: creature, definition: projected, damage: damage, impactDelay: impactDelay,
 		releaseDelay: releaseDelay, releasePacket: releasePacket,
 		effectSlot: effectSlot, startedAt: startedAt}

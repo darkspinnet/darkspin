@@ -81,6 +81,9 @@ func (e *gameplaySessionRegistry) ScenarioGameplayState(ctx context.Context, use
 		result.MissionLabel = bugMissionLabel(binding)
 		result.MissionAsset = binding.Level
 		result.MissionDifficulty = binding.Difficulty
+		result.IsReplay = binding.IsReplay
+		result.IsReplayRandomized = binding.IsReplayRandomized
+		result.IsNoReplay = binding.IsNoReplay
 		result.IsDungeonSetupFinal = peerSession.dungeonSetup.IsCommitted()
 		result.IsArena = binding.Mode == game.ModeArena
 		result.IsArenaSquadAccepted = peerSession.isArenaSquadAccepted

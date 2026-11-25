@@ -40,6 +40,7 @@ type Target struct {
 	CorpseFadeDelay        time.Duration
 	GraphicsState          uint32
 	ReplacementNoun        string
+	ReplacementScale       float32
 	Rotation               raknet.Vector3
 	ExplosionEffectName    string
 	CreatureType           uint32
@@ -497,7 +498,7 @@ func (o *enemyDeathOutbox) SetGraphicsState(
 			raknet.ObjectCreateMessage{
 				ObjectID: o.target.ObjectID, Noun: util.HashID(o.target.ReplacementNoun),
 				PositionX: o.target.Position.X, PositionY: o.target.Position.Y,
-				PositionZ: o.target.Position.Z, Rotation: o.target.Rotation, Scale: 1,
+				PositionZ: o.target.Position.Z, Rotation: o.target.Rotation, Scale: o.target.ReplacementScale,
 				IsCollisionEnabled: o.target.IsCollisionRetained,
 			},
 			raknet.CombatantDataDeltaMessage{
@@ -680,7 +681,7 @@ func (o *enemyDeathOutbox) Stop(_ context.Context, _ sim.EventMeta, intent sim.L
 func (o *enemyDeathOutbox) ApplyModifier(
 	_ context.Context, _ sim.EventMeta, intent sim.AttributeModifierIntent,
 ) error {
-	if intent.Role != enemyDeathTargetRole || intent.AttributeKind != sim.AttributeImmobilized ||
+	if !intent.IsLegacyDelta() || intent.Role != enemyDeathTargetRole || intent.AttributeKind != sim.AttributeImmobilized ||
 		(intent.Amount != 1 && intent.Amount != -1) {
 		return fmt.Errorf("attributeIntent: %#v", intent)
 	}

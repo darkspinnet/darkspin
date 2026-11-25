@@ -127,6 +127,7 @@
 ---@field is_defeated boolean
 
 ---@class WorldNPC
+---@field mutation_phase? 'idle'|'windup'|'firing'|'channel'|'growing'|'promoted' Authoritative Mutation Agent or recipient phase. Does not certify native rendering.
 ---@field object_id integer
 ---@field noun string
 ---@field position WorldPosition
@@ -205,6 +206,7 @@
 ---@field is_npc_truncated boolean
 ---@field pickups WorldPickup[] Nearest 64 health/mana orb records, with stable object-ID distance ties; includes temporarily unavailable or reserved records.
 ---@field pickup_total integer Total joined health/mana orb records, including unavailable, reserved and awaiting-expiry records.
+---@field equipment_drop_count integer Current available unexpired equipment pickup registrations, without copying item data; server effect evidence only. Require is_pickup_available before comparing.
 ---@field is_pickup_truncated boolean More than 64 records exist; absence from this bounded sample does not prove absence from the world.
 ---@field is_pickup_available boolean True distinguishes a valid empty sample from missing, contended or inconsistent pickup producers.
 ---@field pickup_unavailable_reason? string Check when is_pickup_available is false; do not treat unknown as an empty world.

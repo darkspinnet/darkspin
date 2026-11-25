@@ -95,7 +95,7 @@ func (e campaignOrcusReductionEnd) produce() ([][]byte, error) {
 	isCurrent := isFound && peerSession.generation == e.request.generation &&
 		peerSession.zone != nil && peerSession.zone.NPCs() != nil
 	if isCurrent {
-		peerSession.zone.NPCs().ClearDamageReduction(e.request.objectID, e.expiresAt)
+		peerSession.zone.NPCs().ClearVerdanthShield(e.request.objectID, e.expiresAt)
 		e.request.runtime.registry.sessions[e.request.sessionKey] = peerSession
 	}
 	e.request.runtime.registry.mutex.Unlock()
@@ -527,7 +527,7 @@ func (r campaignNPCActionRuntime) startOrcusAbility(
 			r.registry.mutex.Unlock()
 			return nil, errors.New("Orcus ground slam source unavailable")
 		}
-		err = peerSession.zone.NPCs().ApplyDamageReduction(
+		err = peerSession.zone.NPCs().ApplyVerdanthShield(
 			request.objectID, 0.75, reductionExpiresAt,
 		)
 		if err == nil {
@@ -591,7 +591,7 @@ func (r campaignNPCActionRuntime) clearOrcusDamageReduction(
 	peerSession, isFound := r.registry.sessions[request.sessionKey]
 	if isFound && peerSession.generation == request.generation &&
 		peerSession.zone != nil && peerSession.zone.NPCs() != nil {
-		peerSession.zone.NPCs().ClearDamageReduction(request.objectID, expiresAt)
+		peerSession.zone.NPCs().ClearVerdanthShield(request.objectID, expiresAt)
 		r.registry.sessions[request.sessionKey] = peerSession
 	}
 	r.registry.mutex.Unlock()

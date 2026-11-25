@@ -204,6 +204,17 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("enemyHasterProjectileRun: %w", runErr)
 	}
+	idlePackets, isWindowSet, idleErr := prepareNPCIdleWindow(peerSession.zone.NPCs(), enemy,
+		startedAt, ability.ReleaseDelay, ability.Cooldown)
+	if idleErr != nil || !isWindowSet {
+		projectileRun.Stop()
+		r.registry.mutex.Unlock()
+		if idleErr != nil {
+			return nil, fmt.Errorf("enemyHasterIdle: %w", idleErr)
+		}
+		return nil, nil
+	}
+	immediatePackets = append(idlePackets, immediatePackets...)
 	trackErr := peerSession.trackCampaignNPCProjectile(projectileObjectID, projectileRun)
 	if trackErr != nil {
 		projectileRun.Stop()
@@ -258,6 +269,13 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 	currentSession, isCurrentFound := r.registry.sessions[sessionKey]
 	isTracked := isCurrentFound && currentSession.generation == generation && currentSession.zone == projectileSchedule.retirement.originalZone && !projectileSchedule.retirement.isRetired && !projectileSchedule.retirement.isRetirementPending &&
 		currentSession.campaignNPCProjectiles[projectileObjectID] == projectileRun
+	var sourceRetireErr error
+	if isTracked && !currentSession.isCampaignNPCSourceGenerationActive(generation, objectID, enemy.ActionGeneration) {
+		// Scheduling releases the registry lock. A killing hit or replacement
+		// action can win before admission; do not publish its old cast afterward.
+		isTracked = false
+		sourceRetireErr = r.registry.retireCampaignProjectileLocked(projectileSchedule.retirement)
+	}
 	if isTracked {
 		r.registry.queueCampaignProjectilePublicationLocked(projectileSchedule.retirement, sessionKey, immediatePackets)
 		r.registry.admitCampaignProjectilePublicationLocked(projectileSchedule.retirement, sessionKey)
@@ -269,6 +287,9 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 	if !isTracked {
 		cancel()
 		projectileRun.Stop()
+		if sourceRetireErr != nil {
+			return nil, fmt.Errorf("enemyHasterSourceRetire: %w", sourceRetireErr)
+		}
 		return nil, nil
 	}
 	r.logger.Printf(

@@ -928,19 +928,23 @@ void snapshot_ring_dump(
 void trace_hex_line(
     const char* header, int header_length,
     const BYTE* data, unsigned int size, const char* suffix) {
-    size_t suffix_length = strlen(suffix);
+    char local_line[4096];
+    size_t suffix_length;
     size_t total;
     char* line;
     DWORD written;
-    if (header == NULL || header_length <= 0 || data == NULL || suffix == NULL ||
-        size > (SIZE_MAX - (size_t)header_length - suffix_length) / 2) {
+    if (header == NULL || header_length <= 0 || data == NULL || suffix == NULL) {
         return;
     }
+    suffix_length = strlen(suffix);
+    if (suffix_length > SIZE_MAX - (size_t)header_length ||
+        size > (SIZE_MAX - (size_t)header_length - suffix_length) / 2) return;
     total = (size_t)header_length + (size_t)size * 2 + suffix_length;
     if (total > UINT_MAX) {
         return;
     }
-    line = (char*)HeapAlloc(GetProcessHeap(), 0, total);
+    line = local_line;
+    if (total > sizeof(local_line)) line = (char*)HeapAlloc(GetProcessHeap(), 0, total);
     if (line == NULL) {
         return;
     }
@@ -951,6 +955,7 @@ void trace_hex_line(
         fang_record_trace_write(line, (DWORD)total, &written);
     }
     snapshot_ring_append(line, (unsigned int)total);
-    HeapFree(GetProcessHeap(), 0, line);
+    if (line != local_line && !HeapFree(GetProcessHeap(), 0, line))
+        OutputDebugStringA("Fang: hexadecimal trace buffer release failed\n");
 }
 

@@ -48,6 +48,9 @@ type LuaBytecode struct {
 }
 
 type LuaObjectInput struct {
+	IsPlayerControlled              bool
+	Position                        Position
+	OwnerRole                       Role
 	Role                            Role
 	IsAlive                         bool
 	Team                            int
@@ -57,6 +60,8 @@ type LuaObjectInput struct {
 // LuaAbilityInput supplies the allowlisted bytecode and authoritative values
 // needed to compile one ability activation into a typed simulation program.
 type LuaAbilityInput struct {
+	Query           LuaWorldQuery
+	AttributeStates map[AttributeKind]LuaAttributeState
 	// Random is supplied only by live execution, never content import.
 	Random                           *SimulatorRandom
 	Root                             LuaBytecode
@@ -207,6 +212,8 @@ type LuaObjectiveRuntime struct {
 }
 
 type LuaModifierInput struct {
+	Query           LuaWorldQuery
+	AttributeStates map[AttributeKind]LuaAttributeState
 	// Random is supplied only by live execution, never content import.
 	Random                  *SimulatorRandom
 	Root                    LuaBytecode
@@ -300,7 +307,7 @@ type luaCompiler struct {
 	privateTable          *luaTable
 	triggerCallbacks      []*luaClosure
 	attributeHandle       uint32
-	attributeKinds        map[uint32]AttributeKind
+	attributeModifiers    map[uint32]AttributeModifierIntent
 	internalObjectIndexes map[*luaTable]int
 	threadInteger         [16]luaValue
 	objectiveEvent        LuaObjectiveEvent
@@ -926,7 +933,9 @@ func createLuaModifierCompiler(input LuaModifierInput, triggerRole Role) (*luaCo
 		Random: input.Random,
 		Root:   input.Root, Modules: input.Modules, Role: input.Role, Position: input.Position,
 		InstructionBudget: input.InstructionBudget, MemoryBudget: input.MemoryBudget,
-		destination: input.Destination, triggerRole: triggerRole,
+		Query:           input.Query,
+		AttributeStates: input.AttributeStates,
+		destination:     input.Destination, triggerRole: triggerRole,
 		isTriggerModifierActive: input.IsTriggerModifierActive,
 		nearbyObjects:           append([]LuaObjectInput(nil), input.NearbyObjects...),
 		nearbyObjectScans:       nearbyObjectScans,
@@ -1002,10 +1011,11 @@ func newLuaCompiler(input LuaAbilityInput) (*luaCompiler, error) {
 	if memoryBudget < 0 {
 		return nil, errors.New("negative memory budget")
 	}
+	input.AttributeStates = cloneLuaAttributeStates(input.AttributeStates)
 	compiler := &luaCompiler{
 		input: input, global: newLuaTable(nil), moduleChunks: make(map[string]*contentlua.Chunk),
 		loadedModules: make(map[string]bool), instructionBudget: budget, memoryBudget: memoryBudget,
-		attributeKinds: make(map[uint32]AttributeKind), internalObjectIndexes: make(map[*luaTable]int),
+		attributeModifiers: make(map[uint32]AttributeModifierIntent), internalObjectIndexes: make(map[*luaTable]int),
 	}
 	for name := range input.preloadedModules {
 		compiler.loadedModules[name] = true
@@ -1497,23 +1507,14 @@ func (c *luaCompiler) registerGlobals() {
 		"OnAgentDestroyed": 0, "OnAgentDeath": 1,
 	})
 	nAbilityFns := newLuaTable(nil)
-	for _, name := range []string{"Activate", "Tick", "Deactivate"} {
+	for _, name := range []string{"Activate", "Tick", "Deactivate", "HandleEvent"} {
 		nAbilityFns.set(stringLuaKey(name), stringLuaValue(name))
 	}
 	c.global.set(stringLuaKey("nAbilityFns"), tableLuaValue(nAbilityFns))
 
 	nGameObject := newLuaTable(nil)
 	c.setNative(nGameObject, "DropObject", c.dropObjectiveObject)
-	c.setNative(nGameObject, "GetPosition", func(arguments []luaValue) ([]luaValue, error) {
-		if err := c.requireRole(arguments); err != nil {
-			return nil, fmt.Errorf("getPositionRole: %w", err)
-		}
-		return []luaValue{
-			numberLuaValue(float64(c.input.Position.X)),
-			numberLuaValue(float64(c.input.Position.Y)),
-			numberLuaValue(float64(c.input.Position.Z)),
-		}, nil
-	})
+	c.setNative(nGameObject, "GetPosition", c.objectPosition)
 	c.setNative(nGameObject, "GetTeleporterDestination", func(arguments []luaValue) ([]luaValue, error) {
 		err := c.requireRole(arguments)
 		if err != nil {
@@ -1525,12 +1526,7 @@ func (c *luaCompiler) registerGlobals() {
 			numberLuaValue(float64(c.input.destination.Z)),
 		}, nil
 	})
-	c.setNative(nGameObject, "GetOwnerID", func(arguments []luaValue) ([]luaValue, error) {
-		if len(arguments) != 1 || arguments[0].kind != luaString {
-			return nil, errors.New("owner arguments")
-		}
-		return []luaValue{{kind: luaNil}}, nil
-	})
+	c.setNative(nGameObject, "GetOwnerID", c.objectOwner)
 	c.setNative(nGameObject, "IsAlive", func(arguments []luaValue) ([]luaValue, error) {
 		object, err := c.luaObjectArgument(arguments)
 		if err != nil {
@@ -1704,6 +1700,7 @@ func (c *luaCompiler) registerGlobals() {
 	c.global.set(stringLuaKey("nLocomotion"), tableLuaValue(nLocomotion))
 
 	nAttributeType := newLuaTable(nil)
+	nAttributeType.set(stringLuaKey("MaxHealth"), numberLuaValue(4))
 	nAttributeType.set(stringLuaKey("AttackSpeedScale"), numberLuaValue(23))
 	nAttributeType.set(stringLuaKey("MovementSpeedBuff"), numberLuaValue(48))
 	nAttributeType.set(stringLuaKey("AoERadius"), numberLuaValue(62))
@@ -1717,6 +1714,15 @@ func (c *luaCompiler) registerGlobals() {
 		stringLuaValue(string(AttributeInvisibleToSecurityTeleporter)),
 	)
 	c.global.set(stringLuaKey("nAttributeType"), tableLuaValue(nAttributeType))
+	// Build-103 GlobalDefinitions659 supplies these operation identities. The
+	// general attribute binding retains the exact operation and owner handle.
+	nAttributeOp := newLuaTable(nil)
+	nAttributeOp.set(stringLuaKey("kAdd"), numberLuaValue(1))
+	nAttributeOp.set(stringLuaKey("kPercentChange"), numberLuaValue(2))
+	nAttributeOp.set(stringLuaKey("kClamp"), numberLuaValue(3))
+	nAttributeOp.set(stringLuaKey("kAddBest"), numberLuaValue(4))
+	nAttributeOp.set(stringLuaKey("kPercentChangeBest"), numberLuaValue(5))
+	c.global.set(stringLuaKey("nAttributeOp"), tableLuaValue(nAttributeOp))
 	nAttribute := newLuaTable(nil)
 	c.setNative(nAttribute, "GetHealthMultiplierForDifficulty", func(arguments []luaValue) ([]luaValue, error) {
 		if len(arguments) != 0 {
@@ -1724,58 +1730,9 @@ func (c *luaCompiler) registerGlobals() {
 		}
 		return []luaValue{numberLuaValue(c.input.objectiveHealthMultiplier)}, nil
 	})
-	c.setNative(nAttribute, "AddAttributeModifier", func(arguments []luaValue) ([]luaValue, error) {
-		if err := c.requireRole(arguments); err != nil {
-			return nil, fmt.Errorf("attributeRole: %w", err)
-		}
-		if len(arguments) != 3 || arguments[1].kind != luaString || arguments[2].kind != luaNumber {
-			return nil, fmt.Errorf("attribute arguments: %s", luaKinds(arguments))
-		}
-		attributeKinds := AttributeKind(arguments[1].text)
-		if attributeKinds != AttributeImmobilized && attributeKinds != AttributeIntangible &&
-			attributeKinds != AttributeInvisibleToSecurityTeleporter {
-			return nil, fmt.Errorf("attribute kind: %s", arguments[1].text)
-		}
-		c.emit(AttributeModifierIntent{
-			Role: c.input.Role, AttributeKind: attributeKinds, Amount: float32(arguments[2].number),
-		})
-		c.attributeHandle++
-		c.attributeKinds[c.attributeHandle] = attributeKinds
-		return []luaValue{numberLuaValue(float64(c.attributeHandle))}, nil
-	})
-	c.setNative(nAttribute, "RemoveAttributeModifier", func(arguments []luaValue) ([]luaValue, error) {
-		if err := c.requireRole(arguments); err != nil {
-			return nil, fmt.Errorf("attributeRemoveRole: %w", err)
-		}
-		if len(arguments) != 2 || arguments[1].kind != luaNumber {
-			return nil, fmt.Errorf("attribute remove arguments: %s", luaKinds(arguments))
-		}
-		handle := uint32(arguments[1].number)
-		if arguments[1].number != float64(handle) || handle == 0 {
-			return nil, fmt.Errorf("attribute remove handle: %g", arguments[1].number)
-		}
-		attributeKinds, isFound := c.attributeKinds[handle]
-		if !isFound {
-			return nil, fmt.Errorf("attribute remove unknown handle: %d", handle)
-		}
-		delete(c.attributeKinds, handle)
-		c.emit(AttributeModifierIntent{Role: c.input.Role, AttributeKind: attributeKinds, Amount: -1})
-		return nil, nil
-	})
-	c.setNative(nAttribute, "GetAttributeValue", func(arguments []luaValue) ([]luaValue, error) {
-		if len(arguments) != 2 || arguments[1].kind != luaString ||
-			arguments[1].text != string(AttributeInvisibleToSecurityTeleporter) {
-			return nil, fmt.Errorf("attribute value arguments: %s", luaKinds(arguments))
-		}
-		object, err := c.luaObjectArgument(arguments[:1])
-		if err != nil {
-			return nil, fmt.Errorf("attributeObject: %w", err)
-		}
-		if object.IsInvisibleToSecurityTeleporter {
-			return []luaValue{numberLuaValue(1)}, nil
-		}
-		return []luaValue{numberLuaValue(0)}, nil
-	})
+	c.setNative(nAttribute, "AddAttributeModifier", c.addAttributeModifier)
+	c.setNative(nAttribute, "RemoveAttributeModifier", c.removeAttributeModifier)
+	c.setNative(nAttribute, "GetAttributeValue", c.attributeValue)
 	c.global.set(stringLuaKey("nAttribute"), tableLuaValue(nAttribute))
 
 	nBehaviorTree := newLuaTable(nil)
@@ -2026,35 +1983,7 @@ func (c *luaCompiler) registerGlobals() {
 		}
 		return []luaValue{numberLuaValue(1)}, nil
 	})
-	c.setNative(nObjectManager, "GetObjectsInRadius", func(arguments []luaValue) ([]luaValue, error) {
-		if len(arguments) != 5 || arguments[0].kind != luaNumber ||
-			arguments[1].kind != luaNumber || arguments[2].kind != luaNumber ||
-			arguments[3].kind != luaNumber || arguments[4].kind != luaTableValue {
-			return nil, fmt.Errorf("objects radius arguments: %s", luaKinds(arguments))
-		}
-		objects, err := c.newRuntimeTable(nil)
-		if err != nil {
-			return nil, fmt.Errorf("objectsTable: %w", err)
-		}
-		nearbyObjects := c.input.nearbyObjects
-		if len(c.input.nearbyObjectScans) != 0 {
-			scanIndex := min(c.input.nearbyObjectScanIndex, len(c.input.nearbyObjectScans)-1)
-			nearbyObjects = c.input.nearbyObjectScans[scanIndex]
-			c.input.nearbyObjectScanIndex++
-		}
-		for index, object := range nearbyObjects {
-			if object.Role == "" {
-				return nil, fmt.Errorf("nearbyRole[%d]", index)
-			}
-			err = c.setRuntimeField(
-				objects, numberLuaKey(float64(index+1)), stringLuaValue(string(object.Role)),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("nearbyField[%d]: %w", index, err)
-			}
-		}
-		return []luaValue{tableLuaValue(objects)}, nil
-	})
+	c.setNative(nObjectManager, "GetObjectsInRadius", c.objectsInRadius)
 	c.setNative(nObjectManager, "DestroyTriggerVolume", func(arguments []luaValue) ([]luaValue, error) {
 		if len(arguments) != 1 || arguments[0].kind != luaNumber || arguments[0].number != 1 {
 			return nil, fmt.Errorf("destroy trigger volume arguments: %s", luaKinds(arguments))
@@ -2066,6 +1995,13 @@ func (c *luaCompiler) registerGlobals() {
 
 	nPlayer := newLuaTable(nil)
 	c.setNative(nPlayer, "IsPlayerControlledObject", func(arguments []luaValue) ([]luaValue, error) {
+		if c.input.Query != nil {
+			object, err := c.luaObjectArgument(arguments)
+			if err != nil {
+				return nil, fmt.Errorf("playerObject: %w", err)
+			}
+			return []luaValue{booleanLuaValue(object.IsPlayerControlled)}, nil
+		}
 		if len(arguments) == 1 && arguments[0].kind == luaNumber &&
 			(c.objectiveEvent.Kind == LuaObjectiveEventDamage ||
 				c.objectiveEvent.Kind == LuaObjectiveEventHeal ||
@@ -2335,7 +2271,7 @@ func (c *luaCompiler) callClosure(closure *luaClosure, arguments []luaValue) ([]
 	prototype := closure.prototype
 	err := c.reserveMemory(int(prototype.MaxStackSize), "registerFrame")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("callFrame: %w", err)
 	}
 	registers := make([]luaValue, int(prototype.MaxStackSize))
 	parameterCount := min(int(prototype.ParameterCount), len(arguments))
@@ -2348,6 +2284,11 @@ func (c *luaCompiler) callClosure(closure *luaClosure, arguments []luaValue) ([]
 	previousPC := c.currentPC
 	c.currentIdentity = closure.identity
 	defer func() {
+		// Registers belong to this invocation, not the retained objective.
+		// Close captured cells before returning the temporary frame's budget;
+		// closure/upvalue allocations retain their separately charged budget.
+		closeLuaUpvalues(openUpvalue, 0)
+		c.memoryBudget += len(registers)
 		c.currentIdentity = previousIdentity
 		c.currentPC = previousPC
 	}()
@@ -2869,16 +2810,17 @@ func (c *luaCompiler) luaObjectArgument(arguments []luaValue) (LuaObjectInput, e
 	if len(arguments) != 1 || arguments[0].kind != luaString {
 		return LuaObjectInput{}, errors.New("object role required")
 	}
-	for _, object := range c.input.nearbyObjects {
+	if c.input.Query != nil {
+		return c.queryObject(Role(arguments[0].text))
+	}
+	nearbyObjects := c.input.nearbyObjects
+	if len(c.input.nearbyObjectScans) != 0 {
+		scanIndex := min(max(c.input.nearbyObjectScanIndex-1, 0), len(c.input.nearbyObjectScans)-1)
+		nearbyObjects = c.input.nearbyObjectScans[scanIndex]
+	}
+	for _, object := range nearbyObjects {
 		if string(object.Role) == arguments[0].text {
 			return object, nil
-		}
-	}
-	for _, nearbyObjects := range c.input.nearbyObjectScans {
-		for _, object := range nearbyObjects {
-			if string(object.Role) == arguments[0].text {
-				return object, nil
-			}
 		}
 	}
 	return LuaObjectInput{}, fmt.Errorf("object role: %s", arguments[0].text)

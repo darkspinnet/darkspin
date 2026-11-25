@@ -26,21 +26,29 @@ func (e gameplayPeerSession) sampleNPCTarget(target zone.NPCTarget, at time.Time
 func (e *gameplaySessionRegistry) sampleNPCTargetsLocked(world *zone.Zone, targets []zone.NPCTarget, at time.Time) ([]zone.NPCTarget, error) {
 	samples := append([]zone.NPCTarget(nil), targets...)
 	for index, target := range samples {
-		if !target.IsHero {
-			continue
+		sampled, err := e.sampleNPCTargetLocked(world, target, at)
+		if err != nil {
+			return nil, fmt.Errorf("targetSample[%d]: %w", index, err)
 		}
-		for _, member := range e.sessions {
-			if member.zone != world || member.binding.UserID != target.UserID ||
-				member.generation != target.PeerGeneration || member.deployedObjectID != target.ObjectID {
-				continue
-			}
-			sampled, err := member.sampleNPCTarget(target, at)
-			if err != nil {
-				return nil, fmt.Errorf("targetSample[%d]: %w", index, err)
-			}
-			samples[index] = sampled
-			break
-		}
+		samples[index] = sampled
 	}
 	return samples, nil
+}
+
+func (e *gameplaySessionRegistry) sampleNPCTargetLocked(world *zone.Zone, target zone.NPCTarget, at time.Time) (zone.NPCTarget, error) {
+	if !target.IsHero {
+		return target, nil
+	}
+	for _, member := range e.sessions {
+		if member.zone != world || member.binding.UserID != target.UserID ||
+			member.generation != target.PeerGeneration || member.deployedObjectID != target.ObjectID {
+			continue
+		}
+		sampled, err := member.sampleNPCTarget(target, at)
+		if err != nil {
+			return target, fmt.Errorf("targetMotion: %w", err)
+		}
+		return sampled, nil
+	}
+	return target, nil
 }

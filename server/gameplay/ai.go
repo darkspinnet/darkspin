@@ -36,6 +36,7 @@ type playerAIState struct {
 	moveUntil        time.Time
 	combatGoal       raknet.Vector3
 	isStrafeLeft     bool
+	nextRoleCheckAt  time.Time
 	nextIdleWanderAt time.Time
 	idleWanderUntil  time.Time
 	idleWanderGoal   raknet.Vector3
@@ -219,7 +220,7 @@ func (e gameplayPendingRuntime) planPlayerAILocked(
 		}
 		return command, false, nil
 	}
-	if !member.isAbilityReleaseReady(now) || member.heroInputLockRemaining(now) > 0 ||
+	if member.isOperativeCaged(now) || !member.isAbilityReleaseReady(now) || member.heroInputLockRemaining(now) > 0 ||
 		member.isEnemyStunActive(now) || member.isEnemySleepActive(now) || member.isEnemyFearActive(now) {
 		return command, false, nil
 	}
@@ -273,12 +274,17 @@ func (e gameplayPendingRuntime) planPlayerAILocked(
 	}
 	target, isTargetFound := e.playerAITargetLocked(member, ally, isAllyFound, now)
 	attackRange := heroAbilityAdmissionRange(creature, definition)
-	treeGoal, isTreeHealing, rangedThreat := e.playerAITreeGoalLocked(*member, now,
-		attackRange+member.deployedCampaignActorFootprintRadius())
-	member.playerAI.isTreeHealing = isTreeHealing
-	if rangedThreat.objectID != 0 {
-		target, isTargetFound = rangedThreat, true
+	var treeGoal raknet.Vector3
+	isTreeHealing := false
+	if !target.isRescue {
+		var rangedThreat playerAITarget
+		treeGoal, isTreeHealing, rangedThreat = e.playerAITreeGoalLocked(*member, now,
+			attackRange+member.deployedCampaignActorFootprintRadius())
+		if rangedThreat.objectID != 0 {
+			target, isTargetFound = rangedThreat, true
+		}
 	}
+	member.playerAI.isTreeHealing = isTreeHealing
 	distance := zonegeometry.Distance(game.Vec3(member.playerPosition), game.Vec3(target.position))
 	attackRange += member.deployedCampaignActorFootprintRadius() + target.radius
 	if isTreeHealing {
@@ -317,6 +323,10 @@ func (e gameplayPendingRuntime) planPlayerAILocked(
 		}
 	}
 	if !isTargetFound {
+		roleCommand, isRoleSwap := e.playerAIRoleSwapLocked(member, command, now)
+		if isRoleSwap {
+			return roleCommand, true, nil
+		}
 		if member.isEnemyRootActive(now) {
 			return command, false, nil
 		}
@@ -412,8 +422,9 @@ func (e gameplayPendingRuntime) planPlayerAILocked(
 			}
 			isOffensive := active.MaximumDamage > 0 || active.MinimumDamagePerTick > 0 || active.DamageCoefficient > 0
 			isControl := (active.StatusKind == sim.AbilityStatusKindStun || active.StatusKind == sim.AbilityStatusKindSleep ||
-				active.StatusKind == sim.AbilityStatusKindFear) && isAllyFound && target.aggroTargetID == ally.deployedObjectID &&
-				ally.deployedHitPoint() < ally.characterHitPointMaximum(ally.deployedCreatureIndex)*0.40
+				active.StatusKind == sim.AbilityStatusKindFear || (target.isRescue && active.StatusKind == sim.AbilityStatusKindSilence)) &&
+				(target.isRescue || (isAllyFound && target.aggroTargetID == ally.deployedObjectID &&
+					ally.deployedHitPoint() < ally.characterHitPointMaximum(ally.deployedCreatureIndex)*0.40))
 			if !isFound || !isActive || (!isOffensive && !isControl) ||
 				distance > heroAbilityAdmissionRange(creature, active) ||
 				!member.abilityCooldownSession().IsReady(zoneability.HeroAbilityCooldown(abilityID), now) {

@@ -38,7 +38,7 @@ func Remnants(snapshots []zonenpc.Snapshot) ([][]byte, error) {
 				PositionX: plan.Position.X, PositionY: plan.Position.Y,
 				PositionZ: plan.Position.Z,
 				Rotation:  raknet.Vector3{X: plan.Rotation.X, Y: plan.Rotation.Y, Z: plan.Rotation.Z},
-				Scale:     1, IsCollisionEnabled: false,
+				Scale:     plan.RuntimeObjectScale(), IsCollisionEnabled: true,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("remnantReplacement[%d]: %w", plan.ObjectID, err)
@@ -59,7 +59,7 @@ func Remnants(snapshots []zonenpc.Snapshot) ([][]byte, error) {
 				ObjectID: snapshot.Plan.ObjectID, IsTargetable: false,
 			},
 			raknet.ObjectCollisionUpdateMessage{
-				ObjectID: snapshot.Plan.ObjectID, IsCollisionEnabled: !isGeyser && !isPipe && !isWarpTotem,
+				ObjectID: snapshot.Plan.ObjectID, IsCollisionEnabled: !isGeyser && !isPipe,
 			},
 		}
 		if graphicsState != 0 {

@@ -40,6 +40,8 @@ type debugProfileCreateRequest struct {
 	SourceLoginName      string                     `json:"source_login_name"`
 	IsSourceCloneAllowed bool                       `json:"is_source_clone_allowed"`
 	IsPVPEnabled         bool                       `json:"is_pvp_enabled"`
+	IsOverdriveUnlocked  bool                       `json:"is_overdrive_unlocked"`
+	IsAdmin              bool                       `json:"is_admin"`
 	EquippedParts        []debugEquippedPartRequest `json:"equipped_parts"`
 }
 
@@ -47,6 +49,7 @@ type debugEquippedPartRequest struct {
 	SquadCategory   string              `json:"squad_category"`
 	HeroIndex       uint32              `json:"hero_index"`
 	RigblockAssetID uint16              `json:"rigblock_asset_id"`
+	PrefixAssetID   uint16              `json:"prefix_asset_id,omitempty"`
 	Level           uint16              `json:"level"`
 	Rarity          sporenet.PartRarity `json:"rarity"`
 }
@@ -177,6 +180,25 @@ func (e *debugSupervisor) executeSerializedDebugOperation(ctx context.Context, o
 	}
 	state := e.operationState
 	switch operation {
+	case "profile.start":
+		var req struct {
+			Label string `json:"label"`
+		}
+		err := decodeDebugPayload(payload, &req)
+		if err != nil {
+			return nil, fmt.Errorf("profileRequest: %w", err)
+		}
+		result, err := e.startProfiling(req.Label)
+		if err != nil {
+			return result, fmt.Errorf("profileStart: %w", err)
+		}
+		return result, nil
+	case "profile.stop":
+		result, err := e.stopProfiling()
+		if err != nil {
+			return result, fmt.Errorf("profileStop: %w", err)
+		}
+		return result, nil
 	case "scenario.log":
 		var req struct {
 			Message string `json:"message"`
@@ -241,7 +263,8 @@ func (e *debugSupervisor) executeSerializedDebugOperation(ctx context.Context, o
 				return nil, fmt.Errorf("serverDirectory: %w", err)
 			}
 		}
-		state.host, err = newDebugHost(e.sessionContext, debugHostRequest{RunID: e.id, Paths: paths, GameDirectory: req.GameDirectory, ContentPath: req.ContentPath, FangPath: req.FangPath, Port: desktop.CanonicalServerPort, IsModded: req.IsModded})
+		state.host, err = newDebugHost(e.sessionContext, debugHostRequest{RunID: e.id, Paths: paths, GameDirectory: req.GameDirectory, ContentPath: req.ContentPath, FangPath: req.FangPath, Port: desktop.CanonicalServerPort, IsModded: req.IsModded,
+			LauncherHandler: e.launcherHandler, BeforeStart: e.beforeHostStart})
 		if err != nil {
 			return nil, fmt.Errorf("serverStart: %w", err)
 		}
@@ -286,10 +309,13 @@ func (e *debugSupervisor) executeSerializedDebugOperation(ctx context.Context, o
 			return nil, errors.New("source cloning cannot also supply hero nouns")
 		}
 		profileReq := sporenet.DebugProfileRequest{RunID: e.id, ClientName: req.Name, HeroNouns: heroNouns, ChainProgression: req.ChainProgression, SourceLoginName: req.SourceLoginName, IsSourceCloneAllowed: req.IsSourceCloneAllowed, IsPVPEnabled: req.IsPVPEnabled}
+		profileReq.IsOverdriveUnlocked = req.IsOverdriveUnlocked
+		profileReq.IsAdmin = req.IsAdmin
 		for _, part := range req.EquippedParts {
 			profileReq.EquippedParts = append(profileReq.EquippedParts, sporenet.DebugEquippedPart{
 				SquadCategory: part.SquadCategory, HeroIndex: part.HeroIndex,
 				RigblockAssetID: part.RigblockAssetID, Level: part.Level, Rarity: part.Rarity,
+				PrefixAssetID: part.PrefixAssetID,
 			})
 		}
 		var profile sporenet.DebugProfile
@@ -342,7 +368,7 @@ func (e *debugSupervisor) executeSerializedDebugOperation(ctx context.Context, o
 		default:
 			return nil, fmt.Errorf("unsupported client launch mode %q", req.LaunchMode)
 		}
-		credential, err := state.host.ProfileCredential(req.ProfileName)
+		credential, err := state.host.RefreshProfileCredential(ctx, req.ProfileName)
 		if err != nil {
 			return nil, fmt.Errorf("launchProfile: %w", err)
 		}

@@ -12,6 +12,8 @@ import (
 
 func isIndependentDebugOperation(operation string) bool {
 	switch operation {
+	case "client.chat_snapshot", "client.chat_wait", "client.chat_artifacts", "client.chat_wait_native":
+		return true
 	case "profile.create", "profile.logout", "client.launch", "client.close", "scenario.log":
 		return true
 	case "client.ui_hierarchy", "client.open_creature_editor":
@@ -87,6 +89,12 @@ func (e *debugSupervisor) executeIndependentDebugOperation(ctx context.Context, 
 	}
 	e.operationMutex.Unlock()
 	switch operation {
+	case "client.chat_snapshot", "client.chat_wait", "client.chat_artifacts", "client.chat_wait_native":
+		result, chatErr := executeDebugChatOperation(ctx, host, clientManager, operation, payload)
+		if chatErr != nil {
+			return result, fmt.Errorf("chatOperation: %w", chatErr)
+		}
+		return result, nil
 	case "client.wait_signal":
 		result, err := waitDebugObserverSignal(ctx, clientManager, payload)
 		if err != nil {

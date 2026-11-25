@@ -17,6 +17,7 @@ import (
 )
 
 type Session struct {
+	navigationTeleports    []NavigationTeleport
 	attributeMirrorChanges map[uint32]bool
 	attributeMirrorIDs     []uint32
 	merakGeysers           map[uint32]MerakGeyser
@@ -354,7 +355,7 @@ func (s *Session) Restore(snapshots []Snapshot) error {
 			HitPoint: snapshot.HitPoint, ManaPoint: snapshot.ManaPoint,
 			IsDefeated: isDefeated, IsPublished: snapshot.IsPublished,
 			IsSpawnStealthActive:            isSpawnStealthedPlan(plan) && !isDefeated,
-			IsNavigationCollisionEnabled:    !isDefeated || IsGraviticRemnant(plan),
+			IsNavigationCollisionEnabled:    !isDefeated || IsGraviticRemnant(plan) || IsWarpTotem(plan) || CryosACRemnantNoun(plan) != "",
 			IsInvisibleToSecurityTeleporter: plan.IsIntroductionHidden && !isDefeated,
 			status:                          s.initialStatus(plan),
 		}
@@ -681,6 +682,22 @@ func (s *Session) AcquireTarget(
 }
 
 func (s *Session) Retarget(objectID uint32, target Target) (Snapshot, bool, error) {
+	npc, isAcquired, err := s.retarget(objectID, target, false)
+	if err != nil {
+		return Snapshot{}, false, fmt.Errorf("targetReplace: %w", err)
+	}
+	return npc, isAcquired, nil
+}
+
+func (e *Session) WakeDamagedRaytheoid(objectID uint32, target Target) (Snapshot, bool, error) {
+	npc, isAcquired, err := e.retarget(objectID, target, true)
+	if err != nil {
+		return Snapshot{}, false, fmt.Errorf("damageWake: %w", err)
+	}
+	return npc, isAcquired, nil
+}
+
+func (s *Session) retarget(objectID uint32, target Target, isDamageWake bool) (Snapshot, bool, error) {
 	if s == nil || objectID == 0 || target.ObjectID == 0 || !target.IsAlive ||
 		target.Faction == FactionUnknown ||
 		!zonegeometry.IsFinite(target.Position) || target.FootprintRadius < 0 ||
@@ -694,6 +711,10 @@ func (s *Session) Retarget(objectID uint32, target Target) (Snapshot, bool, erro
 	if !isFound || npc.IsDefeated || !npc.IsPublished || npc.HitPoint <= 0 ||
 		!npc.IsScenarioAIEnabled() || npc.Plan.IsFixture || npc.Faction == target.Faction {
 		return npc, false, nil
+	}
+	if isDamageWake && (nounSpecies(npc.Plan.NounName) != "zelemspecialthree" ||
+		npc.IsBirthPending || npc.TargetObjectID != 0 || npc.IsActionStarted) {
+		return Snapshot{}, false, nil
 	}
 	if npc.TargetObjectID != target.ObjectID && time.Now().Before(npc.status.tauntExpiresAt) {
 		return npc, false, nil
@@ -738,7 +759,7 @@ func (s *Session) startAction(
 	if npc.TargetObjectID != 0 && npc.TargetObjectID != targetObjectID {
 		return npc, false, false, nil
 	}
-	if isMutationAgent(npc.Plan) || npc.IsMutationTransforming() || npc.IsActionStarted || npc.IsOrcusFollowing || npc.cinematic.isPending || time.Now().Before(npc.cinematic.intangibleUntil) {
+	if isMutationAgent(npc.Plan) || npc.IsMutationTransforming() || npc.IsActionStarted || npc.IsOrcusFollowing || npc.cinematic.isPending || time.Now().Before(npc.cinematic.intangibleUntil) || time.Now().Before(npc.actionRetryAt) {
 		return npc, false, false, nil
 	}
 	if !npc.IsFirstActionStarted {
@@ -833,20 +854,31 @@ func (s *Session) ReleaseAction(objectID uint32, owner ActionOwner) bool {
 func (s *Session) ReleaseActionGeneration(
 	objectID uint32, owner ActionOwner, actionGeneration uint64,
 ) bool {
-	if s == nil || objectID == 0 || owner.UserID == 0 ||
+	return s.releaseActionGeneration(objectID, owner, actionGeneration, time.Time{})
+}
+
+// ReleaseBlockedPursuit preserves a short idle period before the normal action
+// planner retries, including any ranged or secondary ability it may choose.
+func (e *Session) ReleaseBlockedPursuit(objectID uint32, owner ActionOwner, actionGeneration uint64, retryAt time.Time) bool {
+	return e.releaseActionGeneration(objectID, owner, actionGeneration, retryAt)
+}
+
+func (e *Session) releaseActionGeneration(objectID uint32, owner ActionOwner, actionGeneration uint64, retryAt time.Time) bool {
+	if e == nil || objectID == 0 || owner.UserID == 0 ||
 		owner.PeerGeneration == 0 || actionGeneration == 0 {
 		return false
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	npc, isFound := s.npcs[objectID]
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	npc, isFound := e.npcs[objectID]
 	if !isFound || !npc.IsActionStarted || npc.ActionOwner != owner ||
 		npc.ActionGeneration != actionGeneration {
 		return false
 	}
 	npc.IsActionStarted = false
 	npc.ActionOwner = ActionOwner{}
-	s.npcs[objectID] = npc
+	npc.actionRetryAt = retryAt
+	e.npcs[objectID] = npc
 	return true
 }
 
@@ -859,6 +891,16 @@ func (s *Session) ReleaseActions(owner ActionOwner) []Snapshot {
 	released := make([]Snapshot, 0)
 	for _, objectID := range s.objectIDs {
 		npc := s.npcs[objectID]
+		run := npc.combatIdle.run
+		if run.Owner == owner && isCombatIdleRunStored(npc, run) {
+			clearCombatIdleMovementBuff(&npc, run)
+			npc.combatIdle.run = CombatIdleRun{}
+			s.npcs[objectID] = npc
+		}
+		if npc.targetTooFar.run.Owner == owner {
+			npc.targetTooFar.run = TargetTooFarRun{}
+			s.npcs[objectID] = npc
+		}
 		if npc.IsDefeated || !npc.IsActionStarted ||
 			npc.ActionOwner != owner {
 			continue
@@ -1229,7 +1271,7 @@ func (s *Session) damage(
 	isFieldDamage := isAreaAttack && meta.DescriptorMask&(1<<1|1<<7) == 0
 	now := time.Now()
 	if !meta.isForcedDefeat && (npc.Plan.IsIntroductionHidden || now.Before(npc.status.intangibleExpiresAt) || now.Before(npc.cinematic.intangibleUntil) ||
-		now.Before(npc.status.banishExpiresAt) || now.Before(npc.status.chargeProtectionEnd) ||
+		now.Before(npc.status.banishEnd()) || now.Before(npc.status.chargeProtectionEnd) ||
 		(npc.IsTurtleActive && (len(damageSource) == 0 || damageSource[0] == 0)) ||
 		(npc.IsShieldActive && isShieldDamageImmune(npc, sourcePosition, isFieldDamage, isDamageOverTime))) {
 		return DamageResult{
@@ -1265,9 +1307,7 @@ func (s *Session) damage(
 		}
 		if isEnergyDamage {
 			increase := npc.status.basicEnergyIncrease(now)
-			if now.Before(npc.status.energyVulnerabilityEnd) {
-				increase += npc.status.energyTakenIncrease
-			}
+			increase += npc.status.energyVulnerabilityIncrease(now)
 			damage *= 1 + increase
 		}
 	}
@@ -1293,7 +1333,7 @@ func (s *Session) damage(
 	appliedDamage := min(damage, previousHealth)
 	npc.HitPoint = max(0, previousHealth-appliedDamage)
 	if !meta.isForcedDefeat && appliedDamage > 0 {
-		npc.recordRecentDamage(now, appliedDamage)
+		npc.recordRecentDamage(now, appliedDamage, isDamageOverTime)
 	}
 	npc.IsDefeated = npc.HitPoint == 0
 	markScenarioSelfDeath(&npc, sourceObjectID, targetObjectID, meta.isForcedDefeat)
@@ -1650,6 +1690,9 @@ func (s *Session) resurrect(
 		npc.ActionGeneration = 1
 	}
 	npc.status = status{}
+	npc.Plan.SupportIdleMovementBuff = 0
+	npc.combatIdle = combatIdleState{}
+	npc.targetTooFar = targetTooFarState{}
 	mutationGeneration := npc.Mutation.Generation + 1
 	if mutationGeneration == 0 {
 		mutationGeneration = 1
@@ -1747,7 +1790,7 @@ func (s *Session) DefeatedCandidates(
 	candidate := make([]Snapshot, 0)
 	for _, objectID := range s.objectIDs {
 		npc := s.npcs[objectID]
-		if !npc.IsDefeated || !npc.IsPublished || npc.Plan.IsFixture ||
+		if !npc.IsDefeated || !npc.IsPublished || npc.Plan.IsFixture || IsResurrectionBlocked(npc.Plan) ||
 			zonegeometry.Distance(source, npc.Plan.Position) > maximumRange {
 			continue
 		}

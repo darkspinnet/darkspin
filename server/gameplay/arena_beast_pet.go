@@ -31,8 +31,7 @@ func (e *gameplayPeerSession) stopArenaBeastPet() ([][]byte, error) {
 			enrage.cancel = nil
 		}
 		world.companion.ClearBodyScale(objectID)
-		world.companion.RemoveBuff(objectID,
-			zonecompanion.Buff{DamageBuff: beastPetEnrageDamageIncrease})
+		world.companion.ClearBuffModifier(objectID, enrage.instanceID)
 		modifierPacket, modErr := effectraknet.ModifierDelete(objectID, enrage.instanceID)
 		if modErr != nil {
 			return nil, fmt.Errorf("arenaBeastStopEnrage: %w", modErr)
@@ -80,7 +79,7 @@ func (r campaignAbilityCommandRuntime) spawnArenaBeastPet(
 		raknet.ServerEventMessage{Asset: util.HashID("beastSentinel_summon_burrowIn.ServerEventDef"),
 			ObjectID: objectID, Position: raknet.Vector3(position)},
 		raknet.SetAnimationStateMessage{ObjectID: objectID,
-			State: util.HashID("beastsentinel_pet_spawn"), Scale: 1},
+			State: util.HashID("beastsentinel_pet_spawn"), Timestamp: packet.SourceTime, Scale: 1},
 	}
 	for index, message := range messages {
 		encoded, marshalErr := raknet.MarshalApplication(message)

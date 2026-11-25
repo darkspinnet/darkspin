@@ -102,6 +102,9 @@ func (e campaignDopplerCloneStep) spawn() ([][]byte, error) {
 	plan.NPCPassiveRank = 0
 	plan.InvincitronRage = zonenpc.InvincitronRage{}
 	plan.ObjectID = e.fakeObjectID
+	// Build-103 ScaldronBasicDoppler_Passive kills its retained fake on
+	// owner death. Use the auxiliary-owner lifecycle to retire it immediately.
+	plan.OwnerObjectID = e.objectID
 	plan.NounName = e.profile.RetainedObjectNoun
 	plan.LocusID = 0
 	plan.Kind = 0

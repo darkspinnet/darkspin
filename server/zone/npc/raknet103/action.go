@@ -72,14 +72,26 @@ func RandomTeleport(
 		return nil, errors.New("npc random teleport invalid")
 	}
 	position := vector(destination)
+	goalFlags := uint32(0x20)
+	targetObjectID := uint32(0)
+	externalMotion := raknet.Vector3{}
+	stopDistance := float32(0)
 	return marshalMessages([]raknet.ApplicationMessage{
-		raknet.ObjectPlayerMoveMessage{
-			ObjectID: plan.TargetObjectID, GoalFlags: 0x20, GoalPosition: position,
+		// Build 103's fixed movement receiver skips the controlling hero.
+		// Reflection clears its old route, and 5392F0 resets the physics root
+		// and owner input pose; an ObjectUpdate only changes object fields.
+		raknet.LocomotionUpdateContractMessage{
+			ObjectID: plan.TargetObjectID,
+			Locomotion: raknet.LocomotionReflection{
+				GoalFlags: &goalFlags, GoalPosition: &position,
+				PartialGoalPosition: &position, TargetObjectID: &targetObjectID,
+				ExternalLinearVelocity: &externalMotion, ExternalForce: &externalMotion,
+				AllowedStopDistance: &stopDistance, DesiredStopDistance: &stopDistance,
+			},
 		},
-		raknet.ObjectUpdateMessage{
-			ObjectID: plan.TargetObjectID, PositionX: destination.X,
-			PositionY: destination.Y, PositionZ: destination.Z,
-			IsVisible: true,
+		raknet.ObjectTeleportMessage{
+			ObjectID: plan.TargetObjectID, Position: position,
+			Orientation: raknet.Quaternion{W: 1},
 		},
 		raknet.SetAnimationStateMessage{
 			ObjectID:  plan.TargetObjectID,
@@ -363,11 +375,12 @@ func BoundedStrafe(
 			PositionY: source.Y, PositionZ: source.Z,
 		},
 		raknet.ObjectPlayerMoveMessage{
-			ObjectID: objectID, GoalFlags: 0x41,
+			// Build-103 A0A8A0 -> A14C80 uses an exact point plus facing
+			// target (0x101), not object-follow (0x40). The server owns
+			// WaitForNearGoal stopping; native desired/allowed distances are zero.
+			ObjectID: objectID, GoalFlags: 0x101,
 			GoalPosition: goal, Facing: direction(source, target),
-			AllowedStopDistance: stopDistance,
-			DesiredStopDistance: stopDistance,
-			TargetPosition:      target, TargetObjectID: targetObjectID,
+			TargetPosition: target, TargetObjectID: targetObjectID,
 		},
 		raknet.LocomotionUnreliableMessage{
 			ObjectID: objectID, GoalPosition: goal,
@@ -1126,8 +1139,8 @@ func StealthState(
 	if objectID == 0 {
 		return nil, errors.New("npc stealth state invalid")
 	}
-	packet, err := raknet.MarshalApplication(raknet.AgentBlackboardUpdateMessage{
-		ObjectID: objectID, Stealth: uint8(stealthType), IsTargetable: true,
+	packet, err := raknet.MarshalApplication(raknet.AgentStealthMessage{
+		ObjectID: objectID, Stealth: uint8(stealthType),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("stealthStateMarshal: %w", err)
@@ -1374,8 +1387,8 @@ func ChargeStart(
 		})
 	}
 	if plan.Profile.StealthType != 0 {
-		messages = append(messages, raknet.AgentBlackboardUpdateMessage{
-			ObjectID: plan.SourceObjectID, IsTargetable: true,
+		messages = append(messages, raknet.AgentStealthMessage{
+			ObjectID: plan.SourceObjectID,
 		})
 	}
 	return marshalMessages(messages, "chargeStart")
@@ -1415,8 +1428,8 @@ func ChargeMovementState(
 		raknet.AttributeDataUpdateMessage{
 			ObjectID: objectID, Value: map[uint8]float32{48: movementSpeedBuff},
 		},
-		raknet.AgentBlackboardUpdateMessage{
-			ObjectID: objectID, Stealth: uint8(stealthType), IsTargetable: true,
+		raknet.AgentStealthMessage{
+			ObjectID: objectID, Stealth: uint8(stealthType),
 		},
 	}, "chargeMovementState")
 }

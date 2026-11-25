@@ -17,7 +17,7 @@ import (
 )
 
 // Child396 has default activation0: every accepted request owns an independent
-// modifier and attachment. The cast is never the singleton heroModifierRun.
+// modifier and attachment. The cast owns its independently tracked shield instance.
 type omniShieldRun struct {
 	runtime              campaignAbilityCommandRuntime
 	world                *zone.Zone

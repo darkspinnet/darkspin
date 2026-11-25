@@ -39,7 +39,7 @@ func (e *gameplayPeerSession) startMissileTargetingPresentation(
 		return nil, nil
 	}
 	packet, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
-		Slot: slot, IsForceAttached: true,
+		Slot: slot + 1, IsForceAttached: true,
 		Asset: util.HashID(missileTargetingEffectName), ObjectID: e.deployedObjectID,
 	})
 	if err != nil {
@@ -61,7 +61,7 @@ func (e *gameplayPeerSession) stopMissileTargetingPresentation(
 		return nil, nil
 	}
 	packet, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
-		Slot: e.missileTargetingEffectSlots[creatureIndex], IsRemovalRequested: true,
+		Slot: e.missileTargetingEffectSlots[creatureIndex] + 1, IsRemovalRequested: true,
 		IsHardStop: true, ObjectID: e.deployedObjectID,
 	})
 	if err != nil {

@@ -44,7 +44,7 @@ func startLightspeedPassive(
 	}
 	peerSession.lightspeedPassiveEpoch++
 	epoch := peerSession.lightspeedPassiveEpoch
-	packets, err := peerSession.updateLightspeedPassiveEffect(runtime.effectPool)
+	packets, err := peerSession.updateLightspeedPassiveEffect(runtime.effectPool, runtime.registry, runtime.npc.now())
 	if err != nil {
 		runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("lightspeedPassiveStart: %w", err)
@@ -59,7 +59,7 @@ func startLightspeedPassive(
 		runtime: runtime, packet: packet, sessionKey: sessionKey,
 		generation: generation, epoch: epoch,
 	}
-	err = packet.ScheduleFunc(lightspeedPassiveInterval, step.produce)
+	err = scheduleNPCProducer(runtime.registry, packet, lightspeedPassiveInterval, step.produce)
 	if err != nil {
 		return nil, fmt.Errorf("lightspeedPassiveSchedule: %w", err)
 	}
@@ -75,7 +75,7 @@ func (e lightspeedPassiveStep) produce() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	packets, err := peerSession.updateLightspeedPassiveEffect(e.runtime.effectPool)
+	packets, err := peerSession.updateLightspeedPassiveEffect(e.runtime.effectPool, e.runtime.registry, e.runtime.npc.now())
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("lightspeedPassiveUpdate: %w", err)
@@ -86,7 +86,7 @@ func (e lightspeedPassiveStep) produce() ([][]byte, error) {
 	if !isActive {
 		return packets, nil
 	}
-	err = e.packet.ScheduleFunc(lightspeedPassiveInterval, e.produce)
+	err = scheduleNPCProducer(e.runtime.registry, e.packet, lightspeedPassiveInterval, e.produce)
 	if err != nil && e.runtime.logger != nil {
 		e.runtime.logger.Printf(
 			"RakNet Lightspeed Tempest Passive cycle stopped for %s: %v",
@@ -104,22 +104,42 @@ func (e gameplayPeerSession) isLightspeedPassiveActive() bool {
 }
 
 func (e *gameplayPeerSession) updateLightspeedPassiveEffect(
-	effectPool *attachedEffectPool,
+	effectPool *attachedEffectPool, registry *gameplaySessionRegistry, now time.Time,
 ) ([][]byte, error) {
 	if e == nil || effectPool == nil {
 		return nil, nil
 	}
+	packets := make([][]byte, 0, 3)
 	tier := uint8(0)
 	if e.isLightspeedPassiveActive() {
+		// Build-103 chunk 671 updates both haste attributes, even while the
+		// health ratio stays inside one jetpack-effect tier.
+		attributePacket, err := e.marshalHeroSlowAttributes(e.deployedObjectID,
+			e.enemyAttackSpeed(), e.enemyMovementSpeedBuff())
+		if err != nil {
+			return nil, fmt.Errorf("lightspeedAttributes: %w", err)
+		}
+		packets = append(packets, attributePacket)
+		if e.playerMotion != nil && e.heroCharge == nil && e.heroQuantumBlink == nil &&
+			!e.isEnemyFearActive(now) && !e.isEnemyRootActive(now) && !e.isSleepingCloudActive(now) {
+			movement := e.playerMotion.Snapshot().Movement()
+			increase := max(float32(-0.9), registry.passiveMovementIncrease(*e)+e.enemyMovementSpeedBuff())
+			speed := zonePlayerMoveSpeed * (1 + increase)
+			if movement.IsMoving && movement.Speed != speed {
+				err = e.playerMotion.SetSpeed(now, speed)
+				if err != nil {
+					return nil, fmt.Errorf("lightspeedMotion: %w", err)
+				}
+			}
+		}
 		healthRatio := e.passiveHealthRatio(e.deployedCreatureIndex)
 		tier = min(uint8(len(lightspeedPassiveEffect)),
 			uint8(math.Floor(float64(healthRatio*float32(len(lightspeedPassiveEffect)))))+1)
 	}
 	if tier == e.lightspeedEffectTier &&
 		e.lightspeedEffectObjectID == e.deployedObjectID {
-		return nil, nil
+		return packets, nil
 	}
-	packets := make([][]byte, 0, 2)
 	if e.lightspeedEffectObjectID != 0 {
 		objectID := e.lightspeedEffectObjectID
 		slot := e.lightspeedEffectSlot
@@ -155,4 +175,19 @@ func (e *gameplayPeerSession) updateLightspeedPassiveEffect(
 	e.lightspeedEffectSlot = slot
 	e.lightspeedEffectTier = tier
 	return append(packets, packet), nil
+}
+
+func (e gameplayPeerSession) lightspeedPassiveBonuses(creatureIndex uint32, at time.Time) (float32, float32) {
+	if creatureIndex != e.deployedCreatureIndex || creatureIndex >= uint32(len(e.binding.Creatures)) {
+		return 0, 0
+	}
+	creature := e.binding.Creatures[creatureIndex]
+	if creature.PassiveAbility != util.HashID("LightspeedTempestPassive") {
+		return 0, 0
+	}
+	if e.isOverdriveActiveAt(at) {
+		creature = projectOverdrivePassiveRank(creature)
+	}
+	healthRatio := e.passiveHealthRatio(creatureIndex)
+	return healthRatio * creature.PassiveHealthAttackMax, healthRatio * creature.PassiveHealthMovementMax
 }

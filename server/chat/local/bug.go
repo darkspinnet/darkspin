@@ -237,6 +237,10 @@ func addBugText(archive *zip.Writer, req chat.BugCommand) error {
 	if err != nil {
 		return fmt.Errorf("godContextWrite: %w", err)
 	}
+	_, err = fmt.Fprintf(w, "Replay randomized: %t\nNo replay applied to mission: %t\nNo replay login toggle: %t\n", gameplay.IsReplayRandomized, gameplay.IsNoReplay, gameplay.IsNoReplayEnabled)
+	if err != nil {
+		return fmt.Errorf("replayContextWrite: %w", err)
+	}
 	return nil
 }
 

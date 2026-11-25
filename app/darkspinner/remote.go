@@ -29,9 +29,13 @@ const remoteRefreshInterval = 48 * time.Hour
 
 // RemoteServer is one Darkspinner instance found on the local network.
 type RemoteServer struct {
-	Address       string `json:"address"`
-	ServerVersion string `json:"serverVersion"`
-	GameVersion   string `json:"gameVersion"`
+	Address             string `json:"address"`
+	ServerVersion       string `json:"serverVersion"`
+	GameVersion         string `json:"gameVersion"`
+	IsMaintenance       bool   `json:"isMaintenance"`
+	MaintenanceReason   string `json:"maintenanceReason"`
+	MaintenancePhase    string `json:"maintenancePhase,omitempty"`
+	MaintenanceDeadline string `json:"maintenanceDeadline,omitempty"`
 }
 
 // RemoteProfile is locally cached metadata for one account on another server.
@@ -209,8 +213,12 @@ func probeRemoteServer(ctx context.Context, client *http.Client, address string)
 		return RemoteServer{}, fmt.Errorf("probeStatus: %s", response.Status)
 	}
 	payload := struct {
-		ServerVersion string `json:"server_version"`
-		GameVersion   string `json:"game_version"`
+		ServerVersion       string `json:"server_version"`
+		GameVersion         string `json:"game_version"`
+		IsMaintenance       bool   `json:"is_maintenance"`
+		MaintenanceReason   string `json:"maintenance_reason"`
+		MaintenancePhase    string `json:"maintenance_phase"`
+		MaintenanceDeadline string `json:"maintenance_deadline"`
 	}{}
 	err = json.NewDecoder(io.LimitReader(response.Body, 16*1024)).Decode(&payload)
 	if err != nil {
@@ -218,7 +226,9 @@ func probeRemoteServer(ctx context.Context, client *http.Client, address string)
 	}
 	return RemoteServer{
 		Address: address, ServerVersion: payload.ServerVersion,
-		GameVersion: payload.GameVersion,
+		GameVersion:   payload.GameVersion,
+		IsMaintenance: payload.IsMaintenance, MaintenanceReason: payload.MaintenanceReason,
+		MaintenancePhase: payload.MaintenancePhase, MaintenanceDeadline: payload.MaintenanceDeadline,
 	}, nil
 }
 
@@ -310,7 +320,7 @@ func (a *App) RegisterRemoteProfile(
 	if ctx == nil {
 		ctx = context.TODO()
 	}
-	err = requireRemoteCompatibility(ctx, serverAddress)
+	err = requireRemoteLaunch(ctx, serverAddress)
 	if err != nil {
 		return fmt.Errorf("remoteCompatibility: %w", err)
 	}
@@ -374,6 +384,28 @@ func (a *App) LoginRemoteProfile(
 	err = a.saveRemoteProfile(serverAddress, profile, resolvedPassword, isPasswordRemembered)
 	if err != nil {
 		return fmt.Errorf("remoteSave: %w", err)
+	}
+	return nil
+}
+
+// DeleteRemoteConnection deletes only the locally saved connection, without
+// contacting its server or requiring the account password.
+func (e *App) DeleteRemoteConnection(serverAddress, identity string) error {
+	address, err := normalizeRemoteServerAddress(serverAddress)
+	if err != nil {
+		return fmt.Errorf("connectionAddress: %w", err)
+	}
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return errors.New("identity is required")
+	}
+	ctx := e.lifecycleCtx
+	if ctx == nil {
+		ctx = context.TODO()
+	}
+	err = e.deleteCachedRemoteProfile(ctx, address, identity)
+	if err != nil {
+		return fmt.Errorf("connectionDelete: %w", err)
 	}
 	return nil
 }
@@ -518,7 +550,7 @@ func (a *App) remoteCredential(
 	if ctx == nil {
 		ctx = context.TODO()
 	}
-	err = requireRemoteCompatibility(ctx, serverAddress)
+	err = requireRemoteLaunch(ctx, serverAddress)
 	if err != nil {
 		return "", remoteProfileResponse{}, "", fmt.Errorf("remoteCompatibility: %w", err)
 	}

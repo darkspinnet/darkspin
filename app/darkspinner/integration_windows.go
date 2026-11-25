@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -168,6 +169,10 @@ func inspectLauncherIntegrations(executablePath string, basePath string) (Launch
 	}
 	status.IsStartMenuInstalled = isPathPresent(startMenuPath)
 	status.IsDesktopInstalled = isPathPresent(desktopPath)
+	status.IsStartMenuOwned, status.IsDesktopOwned, err = inspectShortcutOwnership(executablePath, startMenuPath, desktopPath)
+	if err != nil {
+		return status, fmt.Errorf("shortcutInspect: %w", err)
+	}
 	proxyPath := filepath.Join(basePath, "DarksporeBin", "VERSION.dll")
 	contents, err := os.ReadFile(proxyPath)
 	if err == nil {
@@ -177,6 +182,51 @@ func inspectLauncherIntegrations(executablePath string, basePath string) (Launch
 	}
 	status.Message = "Launcher integrations are ready to manage."
 	return status, nil
+}
+
+func inspectShortcutOwnership(executablePath, startMenuPath, desktopPath string) (bool, bool, error) {
+	if !isPathPresent(startMenuPath) && !isPathPresent(desktopPath) {
+		return false, false, nil
+	}
+	// Pass paths as environment data, never interpolate them into PowerShell code.
+	script := `
+$ErrorActionPreference = 'Stop'
+$Shell = New-Object -ComObject WScript.Shell
+function Get-ShortcutOwnership([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    try {
+        $Shortcut = $Shell.CreateShortcut($Path)
+        if ([string]::IsNullOrWhiteSpace($Shortcut.TargetPath)) { return $false }
+        return [string]::Equals([IO.Path]::GetFullPath($Shortcut.TargetPath), [IO.Path]::GetFullPath($env:DARKSPINNER_SHORTCUT_EXECUTABLE), [StringComparison]::OrdinalIgnoreCase)
+    } catch {
+        return $false
+    }
+}
+@{
+    isStartMenuOwned = (Get-ShortcutOwnership $env:DARKSPINNER_SHORTCUT_START_MENU)
+    isDesktopOwned = (Get-ShortcutOwnership $env:DARKSPINNER_SHORTCUT_DESKTOP)
+} | ConvertTo-Json -Compress
+`
+	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	command.Env = append(os.Environ(),
+		"DARKSPINNER_SHORTCUT_EXECUTABLE="+executablePath,
+		"DARKSPINNER_SHORTCUT_START_MENU="+startMenuPath,
+		"DARKSPINNER_SHORTCUT_DESKTOP="+desktopPath,
+	)
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	output, err := command.Output()
+	if err != nil {
+		return false, false, fmt.Errorf("ownershipRead: %w", err)
+	}
+	ownership := struct {
+		IsStartMenuOwned bool `json:"isStartMenuOwned"`
+		IsDesktopOwned   bool `json:"isDesktopOwned"`
+	}{}
+	err = json.Unmarshal(output, &ownership)
+	if err != nil {
+		return false, false, fmt.Errorf("ownershipDecode: %w", err)
+	}
+	return ownership.IsStartMenuOwned, ownership.IsDesktopOwned, nil
 }
 
 func repairLauncherIntegration(kind string, executablePath string, basePath string) error {
@@ -244,15 +294,22 @@ $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath $ShortcutPath)) { exit 0 }
 $Shell = New-Object -ComObject WScript.Shell
 $Shortcut = $Shell.CreateShortcut($ShortcutPath)
-if (-not [string]::Equals([IO.Path]::GetFullPath($Shortcut.TargetPath), [IO.Path]::GetFullPath($ExecutablePath), [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'The shortcut is not owned by this Darkspinner executable.'
+$IsCurrentLauncher = $false
+if (-not [string]::IsNullOrWhiteSpace($Shortcut.TargetPath)) {
+    $TargetPath = [IO.Path]::GetFullPath($Shortcut.TargetPath)
+    $IsCurrentLauncher = [string]::Equals($TargetPath, [IO.Path]::GetFullPath($ExecutablePath), [StringComparison]::OrdinalIgnoreCase)
 }
+if (-not $IsCurrentLauncher) { exit 3 }
 Remove-Item -LiteralPath $ShortcutPath -Force
 `
-	_, err = scriptWriter.WriteString(script)
+	writtenCount, err := scriptWriter.WriteString(script)
 	if err != nil {
-		_ = scriptWriter.Close()
-		return fmt.Errorf("shortcutRemoveWrite: %w", err)
+		closeErr := scriptWriter.Close()
+		return fmt.Errorf("shortcutRemoveWrite: %w", errors.Join(err, closeErr))
+	}
+	if writtenCount != len(script) {
+		closeErr := scriptWriter.Close()
+		return fmt.Errorf("shortcutRemoveLength: %w", errors.Join(errors.New("incomplete shortcut removal script"), closeErr))
 	}
 	err = scriptWriter.Close()
 	if err != nil {
@@ -265,6 +322,10 @@ Remove-Item -LiteralPath $ShortcutPath -Force
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	output, err := command.CombinedOutput()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
+			return errors.New("shortcut_not_owned")
+		}
 		diagnostic := strings.TrimSpace(string(output))
 		if diagnostic != "" {
 			return fmt.Errorf("shortcutRemove: %w: %s", err, diagnostic)

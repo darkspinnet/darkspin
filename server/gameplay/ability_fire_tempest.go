@@ -133,13 +133,13 @@ func (e fireTempestStep) monitor() ([][]byte, error) {
 	}
 	ownerPosition := game.Vec3(peerSession.playerPosition)
 	if pet.Position.Sub(ownerPosition).Length() <= 50 {
-		isAttackResumeNeeded := e.run.isAttackResumeNeeded
+		isAttackNeeded := e.run.attack == nil && !e.run.runtime.now().Before(pet.CooldownEnd)
 		e.run.runtime.registry.mutex.Unlock()
 		err := e.scheduleMonitor()
 		if err != nil {
 			return nil, fmt.Errorf("fireTempestMonitorContinue: %w", err)
 		}
-		if isAttackResumeNeeded {
+		if isAttackNeeded {
 			packets, attackErr := e.run.runtime.damage.startFireTempestPetAttack(
 				e.run.packet, e.run.sessionKey, e.run.generation,
 				e.timestamp+uint64(e.deadline/time.Millisecond),
@@ -473,8 +473,7 @@ func (e fireTempestStep) enragePulse() ([][]byte, error) {
 		}
 	}
 	creature := e.creature
-	creature.DamageProfile.PrimaryAttribute = creature.PetDamage
-	creature.DamageProfile.IsPrimaryAttributeFound = true
+	creature.DamageProfile = fireTempestPetDamageProfile(creature)
 	creature.DamageProfile.DamageBuff += fireTempestEnrageDamageBuff
 	damageDefinition := e.definition
 	damageDefinition.Kind = sim.AbilityKindAuraArea
@@ -537,8 +536,8 @@ func (e fireTempestStep) enragePulse() ([][]byte, error) {
 				e.run.runtime.registry.mutex.Unlock()
 				return packets, nil
 			}
-			err = latest.zone.Companion().AddBuff(
-				pet.ObjectID, zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff},
+			err = latest.zone.Companion().ApplyBuffModifier(
+				pet.ObjectID, enrageInstanceID, zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff},
 			)
 			if err != nil {
 				currentPet, isPetFound = latest.zone.Companion().Snapshot(pet.ObjectID)
@@ -550,8 +549,8 @@ func (e fireTempestStep) enragePulse() ([][]byte, error) {
 			}
 			err = latest.zone.Companion().SetBodyScale(pet.ObjectID, fireTempestEnrageBodyScale)
 			if err != nil {
-				latest.zone.Companion().RemoveBuff(
-					pet.ObjectID, zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff},
+				latest.zone.Companion().ClearBuffModifier(
+					pet.ObjectID, enrageInstanceID,
 				)
 				currentPet, isPetFound = latest.zone.Companion().Snapshot(pet.ObjectID)
 				e.run.runtime.registry.mutex.Unlock()
@@ -585,9 +584,8 @@ func (e fireTempestStep) enrageExpire() ([][]byte, error) {
 	if isEnrageBuffApplied && peerSession.zone != nil &&
 		peerSession.zone.Companion() != nil {
 		peerSession.zone.Companion().ClearBodyScale(e.run.petObjectID)
-		peerSession.zone.Companion().RemoveBuff(
-			e.run.petObjectID,
-			zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff},
+		peerSession.zone.Companion().ClearBuffModifier(
+			e.run.petObjectID, instanceID,
 		)
 	}
 	e.run.isEnrageBuffApplied = false

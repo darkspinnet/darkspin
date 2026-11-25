@@ -66,10 +66,27 @@ func (e *arenaCombatPetRun) startMelee() ([][]byte, error) {
 	}
 	e.cycleCancel = nil
 	ability := e.attackAbility
-	damageRange, err := game.ResolveAbilityDamageRange(game.AbilityDamage{
-		Minimum: ability.MinimumDamage, Maximum: ability.MaximumDamage,
-		Coefficient: ability.DamageCoefficient,
-	}, game.DamageProfile{PrimaryAttribute: e.petDamage, IsPrimaryAttributeFound: true})
+	damageProfile := game.DamageProfile{}
+	if e.kind == arenaCombatPetBeast {
+		var profileErr error
+		damageProfile, profileErr = owner.beastPetDamageProfile()
+		if profileErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("arenaBeastProfile: %w", profileErr)
+		}
+	}
+	var damageRange game.DamageRange
+	var err error
+	if e.kind == arenaCombatPetPlasma {
+		damageRange, err = owner.plasmaPetDamageRange(ability)
+	} else if e.kind == arenaCombatPetSage {
+		damageRange, err = owner.sagePetDamageRange(ability)
+	} else {
+		damageRange, err = game.ResolveAbilityDamageRange(game.AbilityDamage{
+			Minimum: ability.MinimumDamage, Maximum: ability.MaximumDamage,
+			Coefficient: ability.DamageCoefficient,
+		}, damageProfile)
+	}
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaPetDamageRange: %w", err)

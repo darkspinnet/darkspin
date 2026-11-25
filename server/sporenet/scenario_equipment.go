@@ -13,6 +13,7 @@ type DebugEquippedPart struct {
 	SquadCategory   string
 	HeroIndex       uint32
 	RigblockAssetID uint16
+	PrefixAssetID   uint16
 	Level           uint16
 	Rarity          PartRarity
 }
@@ -41,6 +42,10 @@ func (e *UserManager) seedDebugEquipment(user *User, parts []DebugEquippedPart, 
 		part := NewPart(req.RigblockAssetID)
 		if part.RigblockAssetID != req.RigblockAssetID {
 			return fmt.Errorf("part[%d]: invalid rigblock", index)
+		}
+		part.SetPrefix(req.PrefixAssetID, false)
+		if part.PrefixAssetID != req.PrefixAssetID {
+			return fmt.Errorf("part[%d]: invalid prefix", index)
 		}
 		part.ID = uint64(len(user.Parts) + 1)
 		part.Level = req.Level

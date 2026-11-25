@@ -28,6 +28,11 @@ func (e CampaignDirector) SceneryObstacles() ([]CampaignSceneryObstacle, error) 
 	obstacles := make([]CampaignSceneryObstacle, 0)
 	for _, set := range e.MarkerSets {
 		for _, definition := range set.Definitions {
+			// This static noun uses CloseDoor's collision/GFX fallback rather
+			// than a door component. The horde owns its dynamic lifetime.
+			if strings.EqualFold(definition.NounName, "TestDoor_design_blockin_horde_open.Noun") {
+				continue
+			}
 			stem := strings.TrimSuffix(strings.ToLower(definition.NounName), ".noun")
 			if !definition.IsCollisionEnabled || !e.StaticBlockersByInstance[util.HashID(stem)] {
 				continue

@@ -82,9 +82,11 @@ func (r campaignNPCActionRuntime) ensureInvincitronDrone(
 	}
 	authoredProfile.IsTargetable = false
 	authoredProfile.FootprintRadius = footprintRadius
+	authoredProfile.BaseCombatSpeed = invincitronDroneOrbitSpeed
+	authoredProfile.IdleMovementSpeed = invincitronDroneOrbitSpeed
 	plan := zonenpc.SpawnPlan{
 		ObjectID: objectID, OwnerObjectID: ownerObjectID,
-		NounName: "NomadDrone.Noun", Position: invincitronDronePosition(owner.Plan.Position, 0),
+		NounName: "NomadDrone.Noun", Position: campaignDroneOrbitPosition(owner.Plan.Position, 0, invincitronDroneOrbitDuration),
 		LocusID: owner.Plan.LocusID, MarkerSetName: owner.Plan.MarkerSetName,
 		IsEncounterAuxiliary: true,
 		NPCProfile:           authoredProfile,
@@ -131,7 +133,7 @@ func (r campaignNPCActionRuntime) startInvincitronDroneFollows(
 		if plan.OwnerObjectID == 0 || campaignDifficultyNounFamily(plan.NounName) != "nomaddrone" {
 			continue
 		}
-		err := r.startInvincitronDroneFollow(packet.Autonomous(), sessionKey, generation, plan.ObjectID)
+		err := r.startCampaignDroneFollow(packet.Autonomous(), sessionKey, generation, plan.ObjectID)
 		if err != nil {
 			return fmt.Errorf("droneFollowStart[%d]: %w", plan.ObjectID, err)
 		}
@@ -139,7 +141,7 @@ func (r campaignNPCActionRuntime) startInvincitronDroneFollows(
 	return nil
 }
 
-func (r campaignNPCActionRuntime) startInvincitronDroneFollow(
+func (r campaignNPCActionRuntime) startCampaignDroneFollow(
 	packet raknet.Packet, sessionKey string, generation uint64, objectID uint32,
 ) error {
 	r.registry.mutex.Lock()
@@ -152,7 +154,9 @@ func (r campaignNPCActionRuntime) startInvincitronDroneFollow(
 	drone, isDroneFound := member.zone.NPCs().NPC(objectID)
 	owner, isOwnerFound := member.zone.NPCs().NPC(drone.Plan.OwnerObjectID)
 	_, isInvincitron := zonenpc.NomadWithDroneShieldDuration(owner.Plan.NounName)
-	if !isDroneFound || !isOwnerFound || !isInvincitron || drone.IsDefeated || owner.IsDefeated || !drone.IsPublished {
+	isInvincitronDrone := isInvincitron && campaignDifficultyNounFamily(drone.Plan.NounName) == "nomaddrone"
+	isOmicronDrone := campaignDifficultyNounFamily(owner.Plan.NounName) == "nomadcyberone" && zonenpc.IsAgentHealingChild(drone.Plan)
+	if !isDroneFound || !isOwnerFound || (!isInvincitronDrone && !isOmicronDrone) || drone.IsDefeated || owner.IsDefeated || !drone.IsPublished {
 		r.registry.mutex.Unlock()
 		return nil
 	}
@@ -172,10 +176,15 @@ func (r campaignNPCActionRuntime) startInvincitronDroneFollow(
 	if angle < 0 {
 		angle += 2 * math.Pi
 	}
+	period := invincitronDroneOrbitDuration
+	if isOmicronDrone {
+		period = omicronDroneOrbitDuration
+	}
 	follow := &campaignDroneFollowStep{
 		runtime: r, packet: packet, sessionKey: sessionKey, generation: generation,
 		objectID: objectID, ownerObjectID: drone.Plan.OwnerObjectID, advancedAt: r.now(),
-		orbitElapsed: time.Duration(angle / (2 * math.Pi) * float64(invincitronDroneOrbitDuration)),
+		orbitElapsed: time.Duration(angle / (2 * math.Pi) * float64(period)),
+		orbitPeriod:  period,
 	}
 	if member.droneFollows == nil {
 		member.droneFollows = make(map[uint32]*campaignDroneFollowStep)
@@ -206,6 +215,8 @@ type campaignDroneFollowStep struct {
 	ownerObjectID uint32
 	advancedAt    time.Time
 	orbitElapsed  time.Duration
+	orbitPeriod   time.Duration
+	isMoveStarted bool
 }
 
 func (e *campaignDroneFollowStep) release() {
@@ -219,11 +230,10 @@ func (e *campaignDroneFollowStep) release() {
 	e.runtime.registry.sessions[e.sessionKey] = member
 }
 
-// The packaged description requires an orbit, but its native trajectory is
-// unrecovered. Keep the visual and authoritative firing origin on one circle.
-func invincitronDronePosition(owner game.Vec3, elapsed time.Duration) game.Vec3 {
-	angle := elapsed.Seconds() * 2 * math.Pi /
-		invincitronDroneOrbitDuration.Seconds()
+// These drone trajectories are server approximations. Keep visual movement
+// and the authoritative pose on the same circle.
+func campaignDroneOrbitPosition(owner game.Vec3, elapsed, period time.Duration) game.Vec3 {
+	angle := (elapsed % period).Seconds() * 2 * math.Pi / period.Seconds()
 	return owner.Add(game.Vec3{
 		X: invincitronDroneOrbitRadius * float32(math.Cos(angle)),
 		Y: invincitronDroneOrbitRadius * float32(math.Sin(angle)),
@@ -290,13 +300,13 @@ func (e *campaignDroneFollowStep) produce() ([][]byte, error) {
 	activeInterval := min(interval, max(time.Duration(0), drone.Plan.InvincitronRage.ExpiresAt.Sub(e.advancedAt)))
 	e.orbitElapsed += time.Duration(float64(activeInterval) * float64(drone.Plan.InvincitronRage.MovementBuff))
 	e.advancedAt = now
-	position := invincitronDronePosition(owner.Plan.Position, e.orbitElapsed)
+	position := campaignDroneOrbitPosition(owner.Plan.Position, e.orbitElapsed, e.orbitPeriod)
 	lead := invincitronDroneGoalLead
 	if drone.Plan.InvincitronRage.IsActive(now) {
 		lead = time.Duration(float64(lead) * float64(1+drone.Plan.InvincitronRage.MovementBuff))
 	}
-	goal := invincitronDronePosition(
-		owner.Plan.Position, e.orbitElapsed+lead,
+	goal := campaignDroneOrbitPosition(
+		owner.Plan.Position, e.orbitElapsed+lead, e.orbitPeriod,
 	)
 	isMoved := position != drone.Plan.Position
 	var err error
@@ -307,25 +317,49 @@ func (e *campaignDroneFollowStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("droneFollowPosition: %w", err)
 	}
-	packets := make([][]byte, 0, 2)
+	packets := make([][]byte, 0, 3)
 	if isMoved {
-		goalPosition := raknet.Vector3(goal)
-		goalPacket, marshalErr := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
-			ObjectID: e.objectID, GoalFlags: 0x01, GoalPosition: goalPosition,
-			Facing: invincitronDroneFacing(position, goal),
-		})
-		if marshalErr != nil {
-			return nil, fmt.Errorf("droneFollowGoal: %w", marshalErr)
+		// Keep ordinary orbit steps interpolated. Reconcile discontinuities
+		// such as an owner warp with a position update.
+		isDiscontinuous := position.Sub(drone.Plan.Position).Length() > 2*invincitronDroneOrbitRadius
+		if isDiscontinuous {
+			positionPacket, positionErr := raknet.MarshalApplication(raknet.ObjectPositionUpdateMessage{
+				ObjectID: e.objectID, PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
+			})
+			if positionErr != nil {
+				return nil, fmt.Errorf("droneFollowPose: %w", positionErr)
+			}
+			packets = append(packets, positionPacket)
 		}
-		locomotionPacket, marshalErr := raknet.MarshalApplication(
-			raknet.LocomotionUnreliableMessage{
-				ObjectID: e.objectID, GoalPosition: goalPosition,
+		goalPosition := raknet.Vector3(goal)
+		facing := invincitronDroneFacing(position, goal)
+		goalFlags := uint32(0x01)
+		stopDistance := float32(0)
+		targetObjectID := uint32(0)
+		if !e.isMoveStarted || isDiscontinuous {
+			goalPacket, marshalErr := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
+				ObjectID: e.objectID, GoalFlags: 0x01, GoalPosition: goalPosition, Facing: facing,
+			})
+			if marshalErr != nil {
+				return nil, fmt.Errorf("droneFollowStart: %w", marshalErr)
+			}
+			packets = append(packets, goalPacket)
+		}
+		// Combat leaves the drone with a fifteen-metre attack stop distance.
+		// Orbit goals are less than a metre apart: clear that distance and
+		// any combat target whenever the orbit reclaims locomotion ownership.
+		locomotionPacket, marshalErr := raknet.MarshalApplication(raknet.LocomotionUpdateContractMessage{
+			ObjectID: e.objectID, Locomotion: raknet.LocomotionReflection{
+				GoalPosition: &goalPosition, PartialGoalPosition: &goalPosition, Facing: &facing,
+				GoalFlags: &goalFlags, AllowedStopDistance: &stopDistance,
+				DesiredStopDistance: &stopDistance, TargetObjectID: &targetObjectID,
 			},
-		)
+		})
 		if marshalErr != nil {
 			return nil, fmt.Errorf("droneFollowLocomotion: %w", marshalErr)
 		}
-		packets = append(packets, goalPacket, locomotionPacket)
+		packets = append(packets, locomotionPacket)
+		e.isMoveStarted = true
 	}
 	err = e.schedule()
 	if err != nil {

@@ -23,6 +23,7 @@ type playerAITarget struct {
 	aggroTargetID uint32
 	healthRatio   float32
 	isPriority    bool
+	isRescue      bool
 }
 
 type playerAITargetChoice struct {
@@ -56,6 +57,7 @@ func (e gameplayPendingRuntime) playerAIAllyLocked(member gameplayPeerSession) (
 func (e gameplayPendingRuntime) playerAITargetLocked(
 	member *gameplayPeerSession, ally gameplayPeerSession, isAllyFound bool, now time.Time,
 ) (playerAITarget, bool) {
+	isCampaignBot := member.binding.IsServerBot && member.binding.Mode == game.ModeChain
 	targets := make([]playerAITarget, 0)
 	if member.binding.Mode == game.ModeArena {
 		for _, candidate := range e.registry.sessions {
@@ -70,14 +72,35 @@ func (e gameplayPendingRuntime) playerAITargetLocked(
 				healthRatio: candidate.deployedHitPoint() / max(float32(1), candidate.characterHitPointMaximum(candidate.deployedCreatureIndex))})
 		}
 	} else if member.zone != nil && member.zone.NPCs() != nil {
+		var rescueSourceIDs map[uint32]bool
+		if isCampaignBot {
+			rescueSourceIDs = e.playerAIRescueSourcesLocked(member, now)
+		}
+		rescueTarget := playerAITarget{}
+		rescueDistance := float32(0)
 		for _, npc := range member.zone.NPCs().TargetSnapshots() {
+			target := playerAITarget{objectID: npc.ObjectID,
+				position: raknet.Vector3(npc.Position), radius: npc.Radius, aggroTargetID: npc.TargetObjectID,
+				healthRatio: npc.HealthRatio, isPriority: npc.IsPriority}
+			if rescueSourceIDs[target.objectID] {
+				distance := zonegeometry.Distance(game.Vec3(member.playerPosition), npc.Position)
+				if rescueTarget.objectID == 0 || distance < rescueDistance ||
+					(distance == rescueDistance && target.objectID < rescueTarget.objectID) {
+					target.isPriority = true
+					target.isRescue = true
+					rescueTarget = target
+					rescueDistance = distance
+				}
+				continue
+			}
 			if member.binding.IsServerBot && npc.IsDestructible &&
 				(npc.TargetObjectID != member.deployedObjectID || member.playerAI.survival.recentLoss(now) <= 0) {
 				continue
 			}
-			targets = append(targets, playerAITarget{objectID: npc.ObjectID,
-				position: raknet.Vector3(npc.Position), radius: npc.Radius, aggroTargetID: npc.TargetObjectID,
-				healthRatio: npc.HealthRatio, isPriority: npc.IsPriority})
+			targets = append(targets, target)
+		}
+		if rescueTarget.isRescue {
+			return rescueTarget, true
 		}
 	}
 	selected := playerAITarget{}
@@ -87,7 +110,6 @@ func (e gameplayPendingRuntime) playerAITargetLocked(
 	choices := make([]playerAITargetChoice, 0, len(targets))
 	isTankBot := member.binding.IsServerBot && member.binding.Mode == game.ModeChain && isAllyFound &&
 		strings.EqualFold(member.binding.Creatures[member.deployedCreatureIndex].ClassType, "sentinel")
-	isCampaignBot := member.binding.IsServerBot && member.binding.Mode == game.ModeChain
 	engagementDistance := playerAIEngagementDistance
 	if isCampaignBot {
 		engagementDistance = playerAICampaignBotEngagementDistance
@@ -161,6 +183,23 @@ func (e gameplayPendingRuntime) playerAITargetLocked(
 	member.playerAI.targetObjectID = selected.objectID
 	member.playerAI.targetUntil = now.Add(2 * time.Second)
 	return selected, selected.objectID != 0
+}
+
+func (e gameplayPendingRuntime) playerAIRescueSourcesLocked(
+	member *gameplayPeerSession, now time.Time,
+) map[uint32]bool {
+	var sources map[uint32]bool
+	for _, teammate := range e.registry.sessions {
+		if teammate.zone != member.zone || teammate.binding.UserID == member.binding.UserID ||
+			!teammate.stage.IsDungeon() || teammate.isRejoinPending || !teammate.isOperativeCaged(now) {
+			continue
+		}
+		if sources == nil {
+			sources = make(map[uint32]bool)
+		}
+		sources[teammate.operativeCage.record.SourceObjectID] = true
+	}
+	return sources
 }
 
 func playerAIApproach(source raknet.Vector3, target raknet.Vector3, stopDistance float32) raknet.Vector3 {

@@ -60,6 +60,7 @@ type debugWorldNPC struct {
 	IsHostilityAvailable bool               `json:"is_hostility_available"`
 	IsFixture            bool               `json:"is_fixture"`
 	IsBoss               bool               `json:"is_boss"`
+	MutationPhase        string             `json:"mutation_phase,omitempty"`
 	DistanceSquared      float64            `json:"distance_squared"`
 }
 type debugWorldTeleporter struct {
@@ -113,6 +114,7 @@ type debugWorldState struct {
 	IsNPCTruncated          bool                      `json:"is_npc_truncated"`
 	Pickups                 []debugWorldPickup        `json:"pickups"`
 	PickupTotal             int                       `json:"pickup_total"`
+	EquipmentDropCount      int                       `json:"equipment_drop_count"`
 	IsPickupTruncated       bool                      `json:"is_pickup_truncated"`
 	IsPickupAvailable       bool                      `json:"is_pickup_available"`
 	PickupUnavailableReason string                    `json:"pickup_unavailable_reason,omitempty"`
@@ -194,6 +196,7 @@ func observeDebugWorld(ctx context.Context, host *debugHost, clientManager *debu
 	result.NPCTotal = world.NPCTotal
 	result.IsNPCTruncated = world.IsNPCTruncated
 	result.PickupTotal = world.PickupTotal
+	result.EquipmentDropCount = world.EquipmentDropCount
 	result.IsPickupTruncated = world.IsPickupTruncated
 	result.IsPickupAvailable = world.IsPickupAvailable
 	result.PickupUnavailableReason = world.PickupUnavailableReason
@@ -217,7 +220,7 @@ func observeDebugWorld(ctx context.Context, host *debugHost, clientManager *debu
 		debugWorldHeroMotionDTO(result.Hero, hero)
 	}
 	for _, npc := range world.NPCs {
-		result.NPCs = append(result.NPCs, debugWorldNPC{ObjectID: npc.ObjectID, Noun: npc.Noun, Position: debugWorldPositionDTO(npc.Position), HitPoint: npc.HitPoint, IsDead: npc.IsDead, IsPublished: npc.IsPublished, IsHostile: npc.IsHostile, IsHostilityAvailable: npc.IsHostilityAvailable, IsFixture: npc.IsFixture, IsBoss: npc.IsBoss, DistanceSquared: npc.DistanceSquared})
+		result.NPCs = append(result.NPCs, debugWorldNPC{ObjectID: npc.ObjectID, Noun: npc.Noun, Position: debugWorldPositionDTO(npc.Position), HitPoint: npc.HitPoint, IsDead: npc.IsDead, IsPublished: npc.IsPublished, IsHostile: npc.IsHostile, IsHostilityAvailable: npc.IsHostilityAvailable, IsFixture: npc.IsFixture, IsBoss: npc.IsBoss, MutationPhase: npc.MutationPhase, DistanceSquared: npc.DistanceSquared})
 	}
 	for _, hazard := range world.SceneryHazards {
 		result.SceneryHazards = append(result.SceneryHazards, debugWorldSceneryHazard{

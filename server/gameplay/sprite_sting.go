@@ -9,6 +9,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
+	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
 	companionraknet "github.com/darkspinnet/darkspin/server/zone/companion/raknet103"
 )
 
@@ -47,19 +48,22 @@ func (e *heroSummonRun) followOrSting(isSting bool) ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, errors.New("sprite follow timer unavailable")
 	}
-	plans, err := peerSession.zone.Companion().FollowActor(
-		peerSession.binding.UserID, e.generation, e.ownerID, e.objectID,
-		game.Vec3(peerSession.playerPosition), spriteFollowDistance, spriteMovementSpeed, at,
-	)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("spriteFollow: %w", err)
-	}
 	ownerPosition := peerSession.playerPosition
 	character, isCharacterFound := peerSession.squad.Character(peerSession.squad.DeployedIndex())
-	isHealing := isSting && len(plans) == 0 && isCharacterFound && character.IsAvailable &&
+	isHealing := isSting && companion.PositionAt(at).Sub(game.Vec3(ownerPosition)).Length() <= 20 &&
+		isCharacterFound && character.IsAvailable &&
 		character.HitPoints > 0 && character.HitPoints <
 		peerSession.characterHitPointMaximum(peerSession.squad.DeployedIndex())
+	var plans []zonecompanion.Follow
+	var err error
+	if !isHealing {
+		plans, err = peerSession.zone.Companion().FollowFlyingActor(
+			peerSession.binding.UserID, e.generation, e.ownerID, e.objectID, game.Vec3(ownerPosition), at)
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("spriteFollow: %w", err)
+		}
+	}
 	if isHealing {
 		healUntil := at.Add(time.Second)
 		companion, err = peerSession.zone.Companion().HoldFollow(e.objectID, at, healUntil)

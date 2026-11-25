@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	"fmt"
+	"time"
 
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
 )
@@ -18,6 +19,9 @@ func (e gameplayPeerSession) marshalHeroSlowAttributes(
 		}
 		attackSpeed += creature.PartAttribute[23]
 		movementSpeed += creature.PartAttribute[48]
+		passiveAttack, passiveMovement := e.lightspeedPassiveBonuses(uint32(index), time.Now())
+		attackSpeed += passiveAttack
+		movementSpeed += passiveMovement
 		break
 	}
 	packet, err := marshalCampaignNPCSlowAttributes(objectID, attackSpeed, movementSpeed)

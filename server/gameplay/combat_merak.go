@@ -32,7 +32,9 @@ func (s *gameplayPeerSession) planCampaignMerakAdds(
 		return nil, nil, nil
 	}
 	merak, isFound := s.zone.NPCs().NPC(result.ObjectID)
-	if !isFound || merak.Plan.OwnerObjectID != 0 {
+	// The damage transition already retired Merak's existing summons on a
+	// lethal hit. That same hit cannot earn another summon.
+	if !isFound || merak.IsDefeated || merak.Plan.OwnerObjectID != 0 {
 		return nil, nil, nil
 	}
 	switch strings.ToLower(merak.Plan.NounName) {

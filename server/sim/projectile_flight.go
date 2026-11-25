@@ -44,6 +44,7 @@ type ProjectileFlightResult struct {
 	Distance       float32
 	Speed          float32
 	IsResolved     bool
+	IsBlocked      bool
 }
 
 // ProjectileMotionSegment records uninterrupted travel between changes to
@@ -55,11 +56,13 @@ type ProjectileMotionSegment struct {
 	Distance     float32
 	Speed        float32
 	Acceleration float32
+	IsBlocked    bool
 }
 
 // AdvanceMotion consumes the same travel that drives projectile presentation.
 // Frozen intervals have no segments; slow and deflection are already reflected
-// in each segment. Range expiry still precedes collision in the current sample.
+// in each segment. A segment clipped by a blocker admits only earlier contacts.
+// Otherwise range expiry precedes collision in the current sample.
 func (e *ProjectileFlight) AdvanceMotion(
 	at time.Duration, segments []ProjectileMotionSegment, isExpired bool, targets []ProjectileCollisionTarget,
 ) (ProjectileFlightResult, error) {
@@ -70,9 +73,11 @@ func (e *ProjectileFlight) AdvanceMotion(
 	if e.isResolved {
 		return result, nil
 	}
-	for _, segment := range segments {
+	for index, segment := range segments {
 		if !isFinitePosition(segment.Position) || !isFinitePosition(segment.Direction) ||
-			segment.Distance <= 0 || math.IsNaN(float64(segment.Distance)) || math.IsInf(float64(segment.Distance), 0) ||
+			segment.Distance < 0 || (segment.Distance == 0 && !segment.IsBlocked) ||
+			(segment.IsBlocked && index != len(segments)-1) ||
+			math.IsNaN(float64(segment.Distance)) || math.IsInf(float64(segment.Distance), 0) ||
 			segment.Speed < 0 || math.IsNaN(float64(segment.Speed)) || math.IsInf(float64(segment.Speed), 0) ||
 			segment.Acceleration < 0 || math.IsNaN(float64(segment.Acceleration)) || math.IsInf(float64(segment.Acceleration), 0) {
 			return ProjectileFlightResult{}, errors.New("invalid projectile motion")
@@ -80,11 +85,15 @@ func (e *ProjectileFlight) AdvanceMotion(
 		result.Distance += segment.Distance
 		result.Position = addPosition(segment.Position, scalePosition(segment.Direction, segment.Distance))
 		result.Speed = float32(math.Sqrt(float64(segment.Speed*segment.Speed + 2*segment.Acceleration*segment.Distance)))
+		result.IsBlocked = segment.IsBlocked
 	}
-	result.IsResolved = isExpired || result.Distance >= e.maximumDistance
+	result.IsResolved = !result.IsBlocked && (isExpired || result.Distance >= e.maximumDistance)
 	if !result.IsResolved {
 		travelled := e.distance
 		for _, segment := range segments {
+			if segment.IsBlocked && segment.Distance == 0 {
+				break
+			}
 			contactDistance := segment.Distance
 			for _, target := range targets {
 				if target.ObjectID == 0 {
@@ -100,6 +109,7 @@ func (e *ProjectileFlight) AdvanceMotion(
 					return ProjectileFlightResult{}, fmt.Errorf("motionTarget[%d]: %w", target.ObjectID, err)
 				}
 				if !collision.IsDirectHit || collision.TravelDistance > contactDistance ||
+					(segment.IsBlocked && collision.TravelDistance >= segment.Distance) ||
 					(collision.TravelDistance == contactDistance && result.TargetObjectID != 0 && target.ObjectID > result.TargetObjectID) {
 					continue
 				}
@@ -109,6 +119,7 @@ func (e *ProjectileFlight) AdvanceMotion(
 				result.Distance = travelled + contactDistance
 				result.Speed = float32(math.Sqrt(float64(segment.Speed*segment.Speed + 2*segment.Acceleration*contactDistance)))
 				result.IsResolved = true
+				result.IsBlocked = false
 			}
 			if result.IsResolved {
 				break
@@ -116,6 +127,7 @@ func (e *ProjectileFlight) AdvanceMotion(
 			travelled += segment.Distance
 		}
 	}
+	result.IsResolved = result.IsResolved || result.IsBlocked
 	e.position = result.Position
 	e.distance = result.Distance
 	e.at = at

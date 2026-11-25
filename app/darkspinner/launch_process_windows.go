@@ -72,7 +72,9 @@ func (e *injectedProcess) terminate() error {
 		// between the status read and TerminateProcess. Only the signaled
 		// retained handle can establish that termination is already complete.
 		if err == windows.ERROR_ACCESS_DENIED {
-			status, statusErr := windows.WaitForSingleObject(e.process, 0)
+			// Windows can reject termination while exit is still in progress;
+			// give that same retained process handle time to signal.
+			status, statusErr := windows.WaitForSingleObject(e.process, 5_000)
 			if statusErr != nil {
 				return fmt.Errorf("terminateRecheck: %w", statusErr)
 			}

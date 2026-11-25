@@ -204,7 +204,7 @@ func (a *App) newModServer(paths *spinnerPathSet, configPath string) (*server.Se
 }
 
 func (a *App) prepareModConfig(paths *spinnerPathSet) (string, error) {
-	config, wasCreated, err := game.LoadConfig(paths.configPath)
+	config, wasCreated, err := server.LoadLocalConfiguration(paths.configPath)
 	if err != nil {
 		return "", fmt.Errorf("baseConfig: %w", err)
 	}
@@ -221,7 +221,7 @@ func (a *App) prepareModConfig(paths *spinnerPathSet) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("portRelease: %w", err)
 	}
-	for key, setting := range map[game.ConfigKey]string{game.ConfigServerPort: strconv.Itoa(port), game.ConfigIsMultiplayerEnabled: "false", game.ConfigStorageDriver: "sqlite"} {
+	for key, setting := range map[game.ConfigKey]string{game.ConfigServerPort: strconv.Itoa(port), game.ConfigStorageDriver: "sqlite"} {
 		err = config.Set(key, setting)
 		if err != nil {
 			return "", fmt.Errorf("configSet: %w", err)
@@ -232,7 +232,7 @@ func (a *App) prepareModConfig(paths *spinnerPathSet) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("configMkdir: %w", err)
 	}
-	err = config.Save(path)
+	err = server.SaveLocalConfigurationAt(path, modDatabasePath(paths), config)
 	if err != nil {
 		return "", fmt.Errorf("configSave: %w", err)
 	}

@@ -111,7 +111,7 @@ func StartPoisonCloud(simulator *Simulator, scope CancelScope, input PoisonCloud
 		input.CollisionDelay < 0 || input.RangeIncrease < 0 {
 		return nil, fmt.Errorf("poison input: %#v", input)
 	}
-	if input.IsHoming && input.HomingDelay <= 0 {
+	if input.IsHoming && input.HomingDelay < 0 {
 		return nil, errors.New("homing delay invalid")
 	}
 	for index, target := range input.SplashTargets {

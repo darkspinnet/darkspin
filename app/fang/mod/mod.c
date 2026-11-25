@@ -26,31 +26,6 @@ static int mod_state;
 static unsigned int mod_attempts;
 static wchar_t mod_manifest[32768];
 
-/* The retail service discovery still requests its fixed loopback ports after
- * bootstrap. A Mod client must never fall through to the normal save server. */
-// Reads/modifies: caches Mod mode and rewrites fixed loopback service ports in the caller's socket address.
-int fang_redirect_mod_address(struct sockaddr_in* address, unsigned short port, unsigned short party_port) {
-    static LONG mode = -1;
-    LONG is_enabled = InterlockedCompareExchange(&mode, -1, -1);
-    wchar_t marker[2];
-    unsigned short requested;
-    if (is_enabled < 0) {
-        is_enabled = GetEnvironmentVariableW(L"DARKSPIN_MOD_MANIFEST", marker, 2) != 0;
-        InterlockedCompareExchange(&mode, is_enabled, -1);
-    }
-    if (!is_enabled || (ntohl(address->sin_addr.s_addr) >> 24) != 127) return 0;
-    requested = ntohs(address->sin_port);
-    if (requested == 42127) {
-        address->sin_port = htons(port);
-        return 1;
-    }
-    if (requested == 42128) {
-        address->sin_port = htons(party_port);
-        return 1;
-    }
-    return 0;
-}
-
 // Reads: checks readable native code bytes against an expected signature.
 static int mod_signature(BYTE* base, unsigned int offset, const BYTE* bytes, size_t count) {
     return readable_range(base + offset, count) && memcmp(base + offset, bytes, count) == 0;

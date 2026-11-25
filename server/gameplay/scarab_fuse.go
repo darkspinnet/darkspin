@@ -18,6 +18,26 @@ type campaignScarabChaseStep struct {
 	isMoving bool
 }
 
+func withScarabSelfDetonationDeath(source zonenpc.Snapshot, definition zoneNPCDeathDefinition) zoneNPCDeathDefinition {
+	profile, isProfileFound := zonenpc.ActionProfileForPlan(source.Plan)
+	if !isProfileFound || profile.AbilityName != "CitadelMinionSuicide_Suicide" {
+		return definition
+	}
+	// Build-103 chunk 661 has npcFadeOut=0, then a 0.1-second fade and
+	// MarkForDelete. The successful ability has already emitted its explosion;
+	// ordinary death would replace that animation and retain the spent bomb
+	// for 15 seconds.
+	definition.isDeathAnimationSuppressed = true
+	definition.ordinaryDeathAnimation = ""
+	definition.corpseFadeDelay = 0
+	definition.graphicsState = 0
+	definition.explosionEffectName = ""
+	definition.isRemnantRetained = false
+	definition.isCollisionRetained = false
+	definition.deleteDelay = 100 * time.Millisecond
+	return definition
+}
+
 func (e campaignExploderScarabSchedule) resetMovement() ([][]byte, error) {
 	r := e.request.runtime
 	r.registry.mutex.RLock()

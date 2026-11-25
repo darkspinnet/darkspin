@@ -14,9 +14,11 @@ func isActivePartyRecipient(candidate, source gameplayPeerSession) bool {
 			candidate.squad != nil && candidate.stage.IsDungeon() && candidate.dungeonSetup.IsCommitted() &&
 			!candidate.isRejoinPending && !candidate.isZoneTerminal() && candidate.deployedObjectID != 0
 	}
+	// Campaign membership is the alliance. Human bindings may have no team
+	// assignment, while a server bot has an explicit presentation team.
 	if source.zone == nil || candidate.zone != source.zone ||
 		candidate.binding.GameID != source.binding.GameID ||
-		candidate.binding.Team != source.binding.Team || candidate.squad == nil ||
+		candidate.binding.Mode != source.binding.Mode || candidate.squad == nil ||
 		!candidate.stage.IsDungeon() || !candidate.dungeonSetup.IsCommitted() ||
 		candidate.isRejoinPending || candidate.isZoneTerminal() ||
 		candidate.lastPlayerStatus.Status&0x40 != 0 ||

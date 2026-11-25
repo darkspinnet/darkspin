@@ -72,13 +72,15 @@ func PlanCloudLob(
 }
 
 type CloudLobRequest struct {
-	SourceObjectID uint32
-	TargetObjectID uint32
-	SourcePosition game.Vec3
-	TargetPosition game.Vec3
-	Creature       game.GameplayCreature
-	Definition     sim.AbilityDefinition
-	SimulationTime time.Duration
+	SourceObjectID  uint32
+	TargetObjectID  uint32
+	SourcePosition  game.Vec3
+	TargetPosition  game.Vec3
+	Creature        game.GameplayCreature
+	Definition      sim.AbilityDefinition
+	SimulationTime  time.Duration
+	SourceFootprint float32
+	TargetFootprint float32
 }
 
 // Sprout (Abilities/0x009B7C57.lua) launches at GetTargetPosition without
@@ -108,10 +110,20 @@ func PlanCloudLobAt(req CloudLobRequest) (CloudLobPlan, error) {
 		definition.Range, creature.RangeIncrease, definition.DescriptorMask,
 		definition.IsDescriptorFound,
 	)
+	if invalidNumber(req.SourceFootprint) || req.SourceFootprint < 0 ||
+		invalidNumber(req.TargetFootprint) || req.TargetFootprint < 0 {
+		return CloudLobPlan{}, errors.New("invalid cloud lob footprint")
+	}
+	// Native 103 sub_9DE710 includes actor footprints in admission. Keep
+	// the authored range and projectile travel independent of that allowance.
+	admissionRange += req.SourceFootprint
+	if targetObjectID != 0 {
+		admissionRange += req.TargetFootprint
+	}
 	distance := Distance(sourcePosition, targetPosition)
 	if distance > admissionRange {
 		return CloudLobPlan{},
-			fmt.Errorf("targetRange: got %g, want <= %g", distance, admissionRange)
+			TargetRangeError{Distance: distance, Maximum: admissionRange}
 	}
 	projected, err := ProjectTiming(creature, definition)
 	if err != nil {

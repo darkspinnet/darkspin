@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"strings"
@@ -30,6 +31,7 @@ type desktopGrant struct {
 	accountID     int64
 	expiresAt     time.Time
 	clientVersion string
+	revision      int64
 }
 
 // LocalBroker substitutes loopback identity approval for OAuth in development.
@@ -42,6 +44,7 @@ type LocalBroker struct {
 	now            func() time.Time
 	mu             sync.Mutex
 	grants         map[string]desktopGrant
+	attempts       map[string]credentialAttempt
 }
 
 type accountManager interface {
@@ -49,6 +52,21 @@ type accountManager interface {
 	Authenticate(context.Context, string, string) (sporenet.UserIdentity, error)
 	ResolveDesktop(context.Context, string) (sporenet.UserIdentity, error)
 	DeleteProfile(context.Context, string) error
+}
+
+type sessionAdmissionAuthorizer interface {
+	AuthorizeSession(context.Context, int64) error
+}
+
+type credentialAccountManager interface {
+	AuthenticateCredential(context.Context, string, string) (sporenet.UserIdentity, int64, error)
+	CredentialRevision(context.Context, int64) (int64, error)
+	AuthorizeCredential(context.Context, int64, int64) error
+}
+
+type accountDeleter interface {
+	AuthenticateCredential(context.Context, string, string) (sporenet.UserIdentity, int64, error)
+	DeleteAccount(context.Context, sporenet.DeleteAccountRequest) error
 }
 
 // NewLocalBroker creates a broker restricted to the exact loopback HTTP host.
@@ -167,14 +185,25 @@ func (b *LocalBroker) delete(writer http.ResponseWriter, request *http.Request) 
 		writeAuthError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
-	profile, err := b.accountManager.Authenticate(request.Context(), identity, payload.Password)
-	if err != nil || profile.LoginName == "" {
+	deleter, isSupported := b.accountManager.(accountDeleter)
+	if !isSupported {
+		writeAuthError(writer, http.StatusServiceUnavailable, "account deletion unavailable")
+		return
+	}
+	profile, revision, err := deleter.AuthenticateCredential(request.Context(), identity, payload.Password)
+	if err != nil || profile.ID <= 0 || revision <= 0 {
 		b.writeDesktopAuthenticationError(writer, err)
 		return
 	}
-	err = b.accountManager.DeleteProfile(request.Context(), profile.LoginName)
+	err = deleter.DeleteAccount(request.Context(), sporenet.DeleteAccountRequest{
+		UserID: profile.ID, Revision: revision, CurrentPassword: payload.Password,
+	})
 	if err != nil {
-		writeAuthError(writer, http.StatusConflict, err.Error())
+		if errors.Is(err, sporenet.ErrUserActive) {
+			writeAuthError(writer, http.StatusConflict, "Close the game before changing this account.")
+			return
+		}
+		writeAuthError(writer, http.StatusConflict, "Account deletion could not be completed. Sign in again.")
 		return
 	}
 	writeAuthJSON(writer, http.StatusOK, map[string]bool{"deleted": true})
@@ -214,8 +243,14 @@ func (b *LocalBroker) start(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	profile := sporenet.UserIdentity{LoginName: identity, DisplayName: identity}
+	revision := int64(0)
+	credentialManager, isCredentialSupported := b.accountManager.(credentialAccountManager)
 	if !isLoopback {
-		profile, err = b.accountManager.Authenticate(request.Context(), identity, payload.Password)
+		if isCredentialSupported {
+			profile, revision, err = credentialManager.AuthenticateCredential(request.Context(), identity, payload.Password)
+		} else {
+			profile, err = b.accountManager.Authenticate(request.Context(), identity, payload.Password)
+		}
 		if err != nil {
 			b.writeDesktopAuthenticationError(writer, err)
 			return
@@ -227,15 +262,33 @@ func (b *LocalBroker) start(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 	}
+	if isCredentialSupported && revision == 0 {
+		revision, err = credentialManager.CredentialRevision(request.Context(), profile.ID)
+		if err != nil {
+			b.writeDesktopAuthenticationError(writer, err)
+			return
+		}
+	}
 	code, err := randomDesktopCode()
 	if err != nil {
 		writeAuthError(writer, http.StatusInternalServerError, "code generation failed")
 		return
 	}
 	b.mu.Lock()
+	for pendingCode, grant := range b.grants {
+		if !b.now().Before(grant.expiresAt) {
+			delete(b.grants, pendingCode)
+		}
+	}
+	if len(b.grants) >= 4096 {
+		b.mu.Unlock()
+		writeAuthError(writer, http.StatusTooManyRequests, "too many pending launch grants")
+		return
+	}
 	b.grants[code] = desktopGrant{
 		identity: profile.LoginName, accountID: profile.ID, expiresAt: b.now().Add(desktopCodeLifetime),
 		clientVersion: strings.TrimSpace(request.Header.Get(ClientVersionHeader)),
+		revision:      revision,
 	}
 	b.mu.Unlock()
 	result = "approved"
@@ -331,8 +384,26 @@ func (b *LocalBroker) exchange(writer http.ResponseWriter, request *http.Request
 			return
 		}
 	}
+	credentialManager, isCredentialSupported := b.accountManager.(credentialAccountManager)
+	if isCredentialSupported {
+		err = credentialManager.AuthorizeCredential(request.Context(), grant.accountID, grant.revision)
+		if err != nil {
+			writeAuthError(writer, http.StatusUnauthorized, "Account credentials changed. Sign in again.")
+			return
+		}
+	}
+	authorizer, isSupported := b.accountManager.(sessionAdmissionAuthorizer)
+	if isSupported {
+		err = authorizer.AuthorizeSession(request.Context(), grant.accountID)
+		if err != nil {
+			writeAuthError(writer, http.StatusForbidden, "Account access is unavailable or denied.")
+			return
+		}
+	}
 	token := ""
-	if b.accountManager != nil {
+	if isCredentialSupported {
+		token, err = b.issuer.IssueForCredential(grant.identity, grant.accountID, grant.revision, launchTokenLifetime, grant.clientVersion)
+	} else if b.accountManager != nil {
 		token, err = b.issuer.IssueForAccount(grant.identity, grant.accountID, launchTokenLifetime, grant.clientVersion)
 	} else {
 		token, err = b.issuer.IssueForVersion(grant.identity, launchTokenLifetime, grant.clientVersion)
@@ -391,14 +462,20 @@ func remoteIP(remoteAddress string) string {
 }
 
 func decodeAuthRequest(request *http.Request, target any) error {
-	if !strings.HasPrefix(strings.ToLower(request.Header.Get("Content-Type")), "application/json") {
+	mediaType, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" || len(parameters) > 1 {
 		return errors.New("content type is not JSON")
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(nil, request.Body, maximumRequestSize))
 	decoder.DisallowUnknownFields()
-	err := decoder.Decode(target)
+	err = decoder.Decode(target)
 	if err != nil {
 		return fmt.Errorf("jsonDecode: %w", err)
+	}
+	var trailing any
+	err = decoder.Decode(&trailing)
+	if !errors.Is(err, io.EOF) {
+		return errors.New("trailing JSON request")
 	}
 	return nil
 }
@@ -417,6 +494,8 @@ func writeAuthError(writer http.ResponseWriter, status int, message string) {
 }
 
 func writeAuthJSON(writer http.ResponseWriter, status int, payload any) {
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.Header().Set("X-Content-Type-Options", "nosniff")
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(status)
 	_ = json.NewEncoder(writer).Encode(payload)

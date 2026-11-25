@@ -280,6 +280,7 @@ func (s *Store) CreatureTemplates(ctx context.Context) ([]CreatureTemplate, erro
 		if err != nil {
 			return nil, fmt.Errorf("creatureScan: %w", err)
 		}
+		template.Name = creatureAuthoredVariant(template.Name, template.NameLocaleKey)
 		templates = append(templates, template)
 	}
 	err = rows.Err()

@@ -165,7 +165,7 @@ func (e *campaignNomadShielderShieldRun) finish(isAlive bool) ([][]byte, error) 
 	} else {
 		packets = append(packets, stopPacket)
 	}
-	step := campaignNPCStunResumeStep{
+	step := campaignNPCTimedResumeStep{
 		timestamp: stopTimestamp +
 			uint64(e.profile.StopReleaseDelay/time.Millisecond),
 		resume: e.resume,
@@ -454,7 +454,7 @@ func (r campaignNPCActionRuntime) produceNomadShielderShield(
 		r.releaseAction(sessionKey, generation, objectID)
 		return nil, true, fmt.Errorf("shielderShieldFace: %w", err)
 	}
-	stopPackets, stopErr := npcraknet.StopAtPose(objectID, enemy.Plan.Position, enemy.Facing)
+	stopPackets, stopErr := npcraknet.StopAtPose(objectID, enemy.Plan.Position, target.Position.Sub(enemy.Plan.Position))
 	if stopErr != nil {
 		r.registry.mutex.Unlock()
 		r.releaseAction(sessionKey, generation, objectID)

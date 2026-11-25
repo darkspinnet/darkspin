@@ -324,9 +324,27 @@ func PlanCursorAreaWithAdmission(
 	if err != nil {
 		return AreaPlan{}, fmt.Errorf("cursorAreaDamage: %w", err)
 	}
-	target := cursorAreaTargets(
-		enemies, sourceObjectID, targetObjectID, center, projected.Radius,
-	)
+	isSingleTarget := projected.Name == "FireTempestBasic"
+	var target []zonenpc.Snapshot
+	if isSingleTarget {
+		// Build 103 Fire Tempest Basic checks the selected hostile first. Its
+		// cursor radius is only used to find a fallback when that target
+		// is gone, and that fallback takes at most one hit.
+		selected, isFound := enemies.NPC(targetObjectID)
+		if isFound && IsHostileTarget(selected) {
+			target = []zonenpc.Snapshot{selected}
+		} else {
+			for _, candidate := range enemies.LiveSnapshots() {
+				if candidate.Plan.ObjectID != sourceObjectID && IsHostileTarget(candidate) &&
+					positionDistance(center, candidate.Plan.Position) < projected.Radius+candidate.Plan.SpatialRadius() {
+					target = append(target, candidate)
+					break
+				}
+			}
+		}
+	} else {
+		target = cursorAreaTargets(enemies, sourceObjectID, targetObjectID, center, projected.Radius)
+	}
 	targetDamage := make(map[uint32]game.DamageRange)
 	if projected.SecondaryMinimumDamage > 0 && projected.SecondaryMaximumDamage > 0 {
 		secondaryDefinition := projected
@@ -347,7 +365,7 @@ func PlanCursorAreaWithAdmission(
 	return AreaPlan{
 		SourceObjectID: sourceObjectID, AbilityID: util.HashID(projected.Name),
 		Definition: projected, Damage: damage, Center: center, Target: target,
-		TargetDamage: targetDamage,
+		TargetDamage: targetDamage, IsSingleTarget: isSingleTarget,
 	}, nil
 }
 
@@ -448,14 +466,14 @@ func cursorAreaTargets(
 		enemy, isFound := enemies.NPC(targetObjectID)
 		if isFound && !enemy.IsDefeated && enemy.HitPoint > 0 &&
 			enemy.Faction == zonenpc.FactionNonPlayerAligned &&
-			positionDistance(center, enemy.Plan.Position) <= radius {
+			positionDistance(center, enemy.Plan.Position) < radius+enemy.Plan.SpatialRadius() {
 			target = append(target, enemy)
 		}
 	}
 	for _, enemy := range enemies.LiveSnapshots() {
 		if enemy.Plan.ObjectID == targetObjectID ||
 			enemy.Faction != zonenpc.FactionNonPlayerAligned ||
-			positionDistance(center, enemy.Plan.Position) > radius {
+			positionDistance(center, enemy.Plan.Position) >= radius+enemy.Plan.SpatialRadius() {
 			continue
 		}
 		target = append(target, enemy)
@@ -529,8 +547,15 @@ func ResolvePointBlankBasicHit(
 	}
 	target := make([]zonenpc.Snapshot, 0)
 	for _, enemy := range enemies.LiveSnapshots() {
-		if enemy.Faction != zonenpc.FactionNonPlayerAligned ||
-			positionDistance(sourcePosition, enemy.Plan.Position) > projected.Radius {
+		if enemy.Faction != zonenpc.FactionNonPlayerAligned {
+			continue
+		}
+		radius := projected.Radius
+		if projected.Name == "TCShieldedSentinelBasic" {
+			// Build 103 queries for overlapping object spheres.
+			radius += enemy.Plan.SpatialRadius()
+		}
+		if positionDistance(sourcePosition, enemy.Plan.Position) > radius {
 			continue
 		}
 		target = append(target, enemy)
@@ -584,12 +609,8 @@ func CommitArea(
 		if scaledDamage, isScaled := plan.DamageScale[target.Plan.ObjectID]; isScaled {
 			damageScale = scaledDamage
 		}
-		minimumDamage := float32(math.Floor(
-			float64(targetDamage.Minimum * damageScale),
-		))
-		maximumDamage := float32(math.Ceil(
-			float64(targetDamage.Maximum * damageScale),
-		))
+		minimumDamage := targetDamage.Minimum * damageScale
+		maximumDamage := targetDamage.Maximum * damageScale
 		selectedDamage, err := sim.SelectRankDamage(random, sim.DamageRange{
 			Minimum: minimumDamage,
 			Maximum: maximumDamage,

@@ -19,7 +19,7 @@ typedef struct {
     uint32_t key[3];
     uint32_t noun_copy[96];
     uint32_t descriptor[14];
-    wchar_t path[32768];
+    wchar_t* path;
     void* retained;
     int is_attempted;
     int is_ready;
@@ -184,6 +184,7 @@ void fang_mod_install_character(BYTE* base, const wchar_t* manifest) {
     unsigned int index;
     unsigned int installed = 0;
     wchar_t name[32];
+    wchar_t path[32768];
     if (GetPrivateProfileIntW(L"mod", L"character_override", 0, manifest) != 1) return;
     for (index = 1; index <= 128; ++index) {
         mod_character* character = &characters[character_count];
@@ -195,8 +196,13 @@ void fang_mod_install_character(BYTE* base, const wchar_t* manifest) {
         character->source = GetPrivateProfileIntW(L"mod", name, 0, manifest);
         _snwprintf(name, 32, L"png%u", index);
         if (!character->noun || !character->source ||
-            !GetPrivateProfileStringW(L"mod", name, L"", character->path, 32768, manifest)) {
+            !GetPrivateProfileStringW(L"mod", name, L"", path, 32768, manifest)) {
             trace_client_state("mod_character_binding_invalid", index);
+            return;
+        }
+        character->path = fang_mod_retain_path(path);
+        if (character->path == NULL) {
+            trace_client_state("mod_character_path_allocation_failed", index);
             return;
         }
         ++character_count;

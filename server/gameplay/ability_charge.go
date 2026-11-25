@@ -361,21 +361,28 @@ func (e heroChargeSchedule) applyBeastPetChargeStatus(
 	for _, npc := range targets {
 		duration := zonenpc.CrowdControlDuration(npc.Plan, e.definition.StatusDuration)
 		expiresAt := e.runtime.now().Add(duration)
-		err := e.applyStatus(peerSession.zone.NPCs(), npc.Plan.ObjectID, expiresAt)
-		if err != nil {
-			return nil, fmt.Errorf("apply[%d]: %w", npc.Plan.ObjectID, err)
-		}
 		instanceID, err := e.runtime.modifierPool.Allocate()
 		if err != nil {
-			e.clearStatus(peerSession.zone.NPCs(), npc.Plan.ObjectID, expiresAt)
 			return nil, fmt.Errorf("allocate[%d]: %w", npc.Plan.ObjectID, err)
+		}
+		reaction, isAdmitted, err := e.admitStatusLocked(peerSession, npc.Plan.ObjectID, instanceID, expiresAt)
+		if err != nil {
+			releaseErr := e.runtime.modifierPool.Release(instanceID)
+			return nil, fmt.Errorf("apply[%d]: %w", npc.Plan.ObjectID, errors.Join(err, releaseErr))
+		}
+		if !isAdmitted {
+			releaseErr := e.runtime.modifierPool.Release(instanceID)
+			if releaseErr != nil {
+				return nil, fmt.Errorf("deniedRelease: %w", releaseErr)
+			}
+			continue
 		}
 		modifier := heroChargeModifier{
 			targetObjectID: npc.Plan.ObjectID, instanceID: instanceID,
 			expiresAt: expiresAt,
 		}
 		if !e.run.addModifier(modifier) {
-			e.clearStatus(peerSession.zone.NPCs(), npc.Plan.ObjectID, expiresAt)
+			e.clearStatus(peerSession.zone.NPCs(), npc.Plan.ObjectID, instanceID, expiresAt)
 			_ = e.runtime.modifierPool.Release(instanceID)
 			continue
 		}
@@ -395,6 +402,7 @@ func (e heroChargeSchedule) applyBeastPetChargeStatus(
 		if err != nil {
 			return nil, fmt.Errorf("petChargeCommit: %w", err)
 		}
+		e.runtime.registry.queueLaserControlReactionLocked(e.sessionKey, peerSession, reaction)
 	}
 	return packets, nil
 }
@@ -535,23 +543,31 @@ func (e heroChargeSchedule) impact() ([][]byte, error) {
 	for _, npc := range statusTargets {
 		duration := zonenpc.CrowdControlDuration(npc.Plan, e.definition.StatusDuration)
 		expiresAt := e.runtime.now().Add(duration)
-		applyErr := e.applyStatus(peerSession.zone.NPCs(), npc.Plan.ObjectID, expiresAt)
-		if applyErr != nil {
-			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("heroChargeStatus[%d]: %w", npc.Plan.ObjectID, applyErr)
-		}
 		instanceID, allocateErr := e.runtime.modifierPool.Allocate()
 		if allocateErr != nil {
-			e.clearStatus(peerSession.zone.NPCs(), npc.Plan.ObjectID, expiresAt)
 			e.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("heroChargeModifier[%d]: %w", npc.Plan.ObjectID, allocateErr)
+		}
+		reaction, isAdmitted, applyErr := e.admitStatusLocked(&peerSession, npc.Plan.ObjectID, instanceID, expiresAt)
+		if applyErr != nil {
+			releaseErr := e.runtime.modifierPool.Release(instanceID)
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("heroChargeStatus[%d]: %w", npc.Plan.ObjectID, errors.Join(applyErr, releaseErr))
+		}
+		if !isAdmitted {
+			releaseErr := e.runtime.modifierPool.Release(instanceID)
+			if releaseErr != nil {
+				e.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("deniedRelease: %w", releaseErr)
+			}
+			continue
 		}
 		modifier := heroChargeModifier{
 			targetObjectID: npc.Plan.ObjectID, instanceID: instanceID,
 			expiresAt: expiresAt,
 		}
 		if !e.run.addModifier(modifier) {
-			e.clearStatus(peerSession.zone.NPCs(), npc.Plan.ObjectID, expiresAt)
+			e.clearStatus(peerSession.zone.NPCs(), npc.Plan.ObjectID, instanceID, expiresAt)
 			_ = e.runtime.modifierPool.Release(instanceID)
 			continue
 		}
@@ -572,6 +588,7 @@ func (e heroChargeSchedule) impact() ([][]byte, error) {
 			e.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("chargeCommit: %w", commitErr)
 		}
+		e.runtime.registry.queueLaserControlReactionLocked(e.sessionKey, &peerSession, reaction)
 	}
 	if e.definition.Name == "BeastCharge" {
 		e.run.mutex.Lock()
@@ -931,31 +948,54 @@ func (e heroChargeSchedule) statusTargets(
 	return target
 }
 
-func (e heroChargeSchedule) applyStatus(
-	npc *zonenpc.Session, targetObjectID uint32, expiresAt time.Time,
-) error {
+func (e heroChargeSchedule) admitStatusLocked(member *gameplayPeerSession,
+	objectID, instanceID uint32, expiresAt time.Time,
+) (laserModifierReaction, bool, error) {
+	kind := sim.AbilityStatusKindStun
 	switch e.definition.Name {
 	case "BeastCharge":
-		return npc.ApplyStun(targetObjectID, expiresAt)
-	case "EntanglingRush":
-		return npc.ApplyRoot(targetObjectID, expiresAt)
 	case "PhantomCharge":
-		return npc.ApplySilence(targetObjectID, expiresAt)
+		kind = sim.AbilityStatusKindSilence
 	default:
-		return errors.New("hero charge status unavailable")
+		isAdmitted, err := e.applyStatus(member.zone.NPCs(), objectID, instanceID, expiresAt)
+		if err != nil {
+			return laserModifierReaction{}, false, fmt.Errorf("chargeStatus: %w", err)
+		}
+		return laserModifierReaction{}, isAdmitted, nil
+	}
+	reaction, isAdmitted, err := e.runtime.registry.admitLaserControlModifierLocked(member,
+		objectID, instanceID, kind, e.runtime.now(), expiresAt)
+	if err != nil {
+		return laserModifierReaction{}, false, fmt.Errorf("chargeControl: %w", err)
+	}
+	return reaction, isAdmitted, nil
+}
+
+func (e heroChargeSchedule) applyStatus(
+	npc *zonenpc.Session, targetObjectID, instanceID uint32, expiresAt time.Time,
+) (bool, error) {
+	switch e.definition.Name {
+	case "EntanglingRush":
+		isAdmitted, err := npc.AdmitRootModifier(targetObjectID, instanceID, e.runtime.now(), expiresAt)
+		if err != nil {
+			return false, fmt.Errorf("chargeRoot: %w", err)
+		}
+		return isAdmitted, nil
+	default:
+		return false, errors.New("hero charge status unavailable")
 	}
 }
 
 func (e heroChargeSchedule) clearStatus(
-	npc *zonenpc.Session, targetObjectID uint32, expiresAt time.Time,
+	npc *zonenpc.Session, targetObjectID, instanceID uint32, expiresAt time.Time,
 ) {
 	switch e.definition.Name {
 	case "BeastCharge":
-		npc.ClearStun(targetObjectID, expiresAt)
+		npc.ClearStunModifier(targetObjectID, instanceID)
 	case "EntanglingRush":
-		npc.ClearRoot(targetObjectID, expiresAt)
+		npc.ClearRootModifier(targetObjectID, instanceID)
 	case "PhantomCharge":
-		npc.ClearSilence(targetObjectID, expiresAt)
+		npc.ClearSilenceModifier(targetObjectID, instanceID)
 	}
 }
 
@@ -965,6 +1005,11 @@ func prepareBeastPetCharge(
 	if peerSession == nil || peerSession.beastPetObjectID == 0 ||
 		peerSession.zone == nil || peerSession.zone.Companion() == nil {
 		return zonecompanion.Pursuit{}, game.DamageRange{}, nil, nil
+	}
+	damageProfile, profileErr := peerSession.beastPetDamageProfile()
+	if profileErr != nil {
+		return zonecompanion.Pursuit{}, game.DamageRange{}, nil,
+			fmt.Errorf("beastChargeProfile: %w", profileErr)
 	}
 	companion := peerSession.zone.Companion()
 	peerSession.retireBeastChargePets(time.Time{})
@@ -1038,10 +1083,7 @@ func prepareBeastPetCharge(
 	}
 	damage, err := game.ResolveAbilityDamageRange(
 		game.AbilityDamage{Minimum: 8, Maximum: 12, Coefficient: 0.05},
-		game.DamageProfile{
-			PrimaryAttribute:        peerSession.beastPetDamage,
-			IsPrimaryAttributeFound: true,
-		},
+		damageProfile,
 	)
 	if err != nil {
 		if pursuit.TravelDuration > 0 {
@@ -1080,7 +1122,8 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 	isTargetAvailable := isTargetFound && !target.IsDefeated && target.HitPoint > 0 &&
 		target.Faction == zonenpc.FactionNonPlayerAligned
 	isCursorDirected := definition.Name == "EntanglingRush" ||
-		definition.Name == "PhantomCharge"
+		definition.Name == "PhantomCharge" ||
+		(definition.Name == "BeastCharge" && !isTargetAvailable)
 	if !isTargetAvailable && !isCursorDirected {
 		r.registry.mutex.Unlock()
 		return req.reject("charge target unavailable")
@@ -1122,10 +1165,28 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 	}
 	stopDistance := projected.Distance
 	if projected.Name == "BeastCharge" {
-		stopDistance = peerSession.deployedCampaignActorFootprintRadius() +
-			max(float32(0.5), target.Plan.ActorFootprintRadius()) + 0.2
+		stopDistance = peerSession.deployedCampaignActorFootprintRadius() * 0.5
+		if isTargetAvailable {
+			stopDistance = peerSession.deployedCampaignActorFootprintRadius() +
+				max(float32(0.5), target.Plan.ActorFootprintRadius()) + 0.2
+		}
 	}
 	destination := chargeDestination(startPosition, targetPosition, stopDistance)
+	if projected.Name == "BeastCharge" && !isTargetAvailable {
+		clipped, isReachable, clipErr := navigationClippedMovementDestination(
+			peerSession.zone.Navigation(), game.Vec3(startPosition), game.Vec3(destination),
+			peerSession.deployedCampaignNavigationRadius(),
+		)
+		if clipErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("beastChargeDestination: %w", clipErr)
+		}
+		if !isReachable {
+			r.registry.mutex.Unlock()
+			return req.reject("charge destination unreachable")
+		}
+		destination = raknet.Vector3(clipped)
+	}
 	if projected.Name == "PhantomCharge" {
 		// The sliding branch of the client template uses the exact cursor point.
 		destination = targetPosition
@@ -1197,7 +1258,7 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 		return nil, fmt.Errorf("heroChargeAnimation: %w", err)
 	}
 	movementTargetPosition := target.Plan.Position
-	if projected.Name == "PhantomCharge" {
+	if isCursorDirected {
 		movementTargetPosition = game.Vec3(targetPosition)
 	}
 	var movePackets [][]byte
@@ -1248,7 +1309,7 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 	petPursuit := zonecompanion.Pursuit{}
 	petDamage := game.DamageRange{}
 	petPackets := make([][]byte, 0)
-	if projected.Name == "BeastCharge" {
+	if projected.Name == "BeastCharge" && isTargetAvailable {
 		petPursuit, petDamage, petPackets, err = prepareBeastPetCharge(
 			&peerSession, target, r.now(),
 		)

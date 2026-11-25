@@ -2,7 +2,6 @@ package gameplay
 
 import (
 	"fmt"
-	"math"
 	"sort"
 	"time"
 
@@ -95,8 +94,8 @@ func (e *campaignFixtureBurnState) projectDamage(profile zonenpc.ActionProfile) 
 	if multiplier == 0 {
 		multiplier = 1
 	}
-	damage.Minimum = float32(math.Floor(float64(damage.Minimum * multiplier)))
-	damage.Maximum = float32(math.Ceil(float64(damage.Maximum * multiplier)))
+	damage.Minimum *= multiplier
+	damage.Maximum *= multiplier
 	return damage, nil
 }
 
