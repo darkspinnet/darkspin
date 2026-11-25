@@ -66,17 +66,13 @@ func (e *ProjectileRun) RetargetAffliction(now time.Time, targetID uint32, targe
 	if err != nil {
 		return nil, fmt.Errorf("steeringMarshal: %w", err)
 	}
-	positionPacket, err := raknet.MarshalApplication(raknet.ObjectPositionUpdateMessage{
-		ObjectID: e.objectID, PositionX: e.motionPosition.X, PositionY: e.motionPosition.Y, PositionZ: e.motionPosition.Z,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("steeringPosition: %w", err)
-	}
 	e.direction = direction
 	e.targetObjectID = targetID
 	e.targetPosition = target
 	e.afflictionTurnAt = now
-	return [][]byte{positionPacket, locomotionPacket}, nil
+	// Steer the existing native mover. Rewriting its position at every sample
+	// makes delivery jitter visible as repeated miniature teleports.
+	return [][]byte{locomotionPacket}, nil
 }
 
 func afflictionDirection(direction, delta sim.Position, maximumAngle float64) sim.Position {

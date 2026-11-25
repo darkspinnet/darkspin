@@ -173,7 +173,7 @@ func (e *gameplayPartDropTarget) PlacePart(part sporenet.Part) error {
 		return fmt.Errorf("dropRegister: %w", err)
 	}
 	err = e.session.zone.PickupPayload().AddEquipment(zoneinteract.EquipmentPickup{
-		ObjectID: objectID, Part: part, WinnerUserID: e.session.binding.UserID,
+		ObjectID: objectID, Part: part,
 		PresentationPolicy: zoneloot.EquipmentInventoryGroundDrop,
 	})
 	if err != nil {

@@ -738,6 +738,16 @@ func (e *Zone) ValidateReconnect(
 }
 
 func (e *Zone) Leave(userID uint64, peerGeneration uint64) bool {
+	return e.leave(userID, peerGeneration, true)
+}
+
+// LeaveForContinue removes the old zone membership without removing the
+// owning native player, which survives the party's next-mission transition.
+func (e *Zone) LeaveForContinue(userID uint64, peerGeneration uint64) bool {
+	return e.leave(userID, peerGeneration, false)
+}
+
+func (e *Zone) leave(userID uint64, peerGeneration uint64, isPlayerDeparted bool) bool {
 	if e == nil || userID == 0 || peerGeneration == 0 {
 		return false
 	}
@@ -803,7 +813,7 @@ func (e *Zone) Leave(userID uint64, peerGeneration uint64) bool {
 	}
 	e.projection.PublishHeroLeave(zoneprojection.HeroLeave{
 		ObjectIDs:  removedObjectIDs,
-		PlayerSlot: current.Slot, IsMemberRemoved: true,
+		PlayerSlot: current.Slot, IsMemberRemoved: isPlayerDeparted,
 	})
 	releasedTarget := make([]zonenpc.Snapshot, 0)
 	if isHeroFound {

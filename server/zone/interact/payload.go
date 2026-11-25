@@ -80,7 +80,7 @@ func (e *PickupPayloadRegistry) Equipment(objectID uint32) (EquipmentPickup, boo
 func (e *PickupPayloadRegistry) SetEquipmentRoll(
 	objectID uint32, userID uint64, rolls []EquipmentPickupRoll,
 ) (EquipmentPickup, error) {
-	if e == nil || objectID == 0 || userID == 0 || len(rolls) == 0 {
+	if e == nil || objectID == 0 || userID == 0 {
 		return EquipmentPickup{}, errors.New("invalid equipment winner")
 	}
 	e.mu.Lock()
@@ -88,6 +88,11 @@ func (e *PickupPayloadRegistry) SetEquipmentRoll(
 	pickup, isFound := e.equipmentPickups[objectID]
 	if !isFound {
 		return EquipmentPickup{}, errors.New("equipment pickup unavailable")
+	}
+	// Voluntarily dropped equipment belongs to its collector, without a
+	// party roll. Enemy loot must still carry an actual roll result.
+	if len(rolls) == 0 && pickup.PresentationPolicy != zoneloot.EquipmentInventoryGroundDrop {
+		return EquipmentPickup{}, errors.New("equipment rolls unavailable")
 	}
 	if pickup.WinnerUserID != 0 && pickup.WinnerUserID != userID {
 		return EquipmentPickup{}, errors.New("equipment winner already selected")

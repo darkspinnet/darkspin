@@ -2122,7 +2122,7 @@ func (r campaignResultRuntime) continueChain(
 		return nil, nil
 	}
 	r.retireCampaignServerBots(continueSession)
-	stopGameplayPeerSession(continueSession, r.modifierPool, r.effectPool)
+	stopContinuedGameplayPeerSession(continueSession, r.modifierPool, r.effectPool)
 	joinRuntime := gameplayJoinRuntime{
 		registry: r.registry, gameplayJoin: r.gameplayJoin,
 		ratingConversions: r.ratingConversions, logger: r.logger,

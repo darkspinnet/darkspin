@@ -855,6 +855,7 @@ type enrageSchedule struct {
 	binding             game.GameplayBinding
 	run                 *abilityraknet.EnrageRun
 	previousRun         *abilityraknet.EnrageRun
+	previousRecipient   *enrageRecipient
 	cooldownReservation zoneability.CooldownReservation
 	releaseReservation  zoneaction.ReleaseReservation
 	releasePacket       []byte
@@ -907,20 +908,29 @@ func (e enrageTickStep) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	packets, healedAmount, err := schedule.run.Apply(
-		campaignEnrageState{session: &peerSession},
+		campaignEnrageAdapter(&peerSession, true),
 		schedule.definition,
 		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond),
 	)
+	recipientSession := peerSession
+	if peerSession.enrageRecipient != nil {
+		state := sharedEnrageState{source: &peerSession, recipient: peerSession.enrageRecipient, isRegistryLocked: true}
+		member, isRecipientFound := state.open()
+		if isRecipientFound {
+			recipientSession = member.session
+			member.close()
+		}
+	}
 	if err == nil && peerSession.binding.Mode == game.ModeArena && healedAmount > 0 {
 		match := schedule.runtime.registry.arenaMatches[peerSession.binding.GameID]
 		if match != nil && match.isCombatActive {
-			match.result.recordHealing(schedule.binding.UserID, peerSession.binding.UserID, healedAmount)
+			match.result.recordHealing(schedule.binding.UserID, recipientSession.binding.UserID, healedAmount)
 		}
-		for index := uint32(0); index < uint32(len(peerSession.binding.Creatures)); index++ {
-			if zonehero.ObjectID(peerSession.binding.Slot, index) != schedule.run.TargetObjectID() {
+		for index := uint32(0); index < uint32(len(recipientSession.binding.Creatures)); index++ {
+			if zonehero.ObjectID(recipientSession.binding.Slot, index) != schedule.run.TargetObjectID() {
 				continue
 			}
-			resourcePacket, resourceErr := peerSession.marshalCampaignCharacterResource(index)
+			resourcePacket, resourceErr := recipientSession.marshalCampaignCharacterResource(index)
 			if resourceErr != nil {
 				schedule.runtime.registry.mutex.Unlock()
 				return nil, fmt.Errorf("enrageResource: %w", resourceErr)
@@ -929,7 +939,7 @@ func (e enrageTickStep) produce() ([][]byte, error) {
 		}
 	}
 	schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
-	schedule.runtime.registry.queueArenaAbilityResourcesLocked(peerSession, packets)
+	schedule.runtime.registry.queueArenaAbilityResourcesLocked(recipientSession, packets)
 	schedule.runtime.registry.mutex.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("campaignEnrageTick[%d]: %w", e.index, err)
@@ -940,15 +950,23 @@ func (e enrageTickStep) produce() ([][]byte, error) {
 	if schedule.binding.Mode == game.ModeArena {
 		return packets, nil
 	}
+	delta := sporenet.PlayerStatDelta{PVEHealing: float64(healedAmount)}
+	if recipientSession.binding.UserID == schedule.binding.UserID {
+		delta.PVEHealingReceived = float64(healedAmount)
+	}
 	err = schedule.runtime.stats.Record(
 		context.Background(), schedule.binding,
-		sporenet.PlayerStatDelta{
-			PVEHealing:         float64(healedAmount),
-			PVEHealingReceived: float64(healedAmount),
-		},
+		delta,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("campaignEnrageStats: %w", err)
+	}
+	if recipientSession.binding.UserID != schedule.binding.UserID {
+		err = schedule.runtime.stats.Record(context.Background(), recipientSession.binding,
+			sporenet.PlayerStatDelta{PVEHealingReceived: float64(healedAmount)})
+		if err != nil {
+			return nil, fmt.Errorf("enrageRecipientStats: %w", err)
+		}
 	}
 	return packets, nil
 }
@@ -961,9 +979,13 @@ func (e enrageSchedule) produceExpiry() ([][]byte, error) {
 		return nil, nil
 	}
 	expiryPackets, err := e.run.Expire(
-		campaignEnrageState{session: &peerSession},
+		campaignEnrageAdapter(&peerSession, true),
 	)
+	if err != nil {
+		e.run.ReleaseEffect()
+	}
 	peerSession.enrageRun = nil
+	peerSession.enrageRecipient = nil
 	e.run.ClearCancel()
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
@@ -982,11 +1004,13 @@ func (e enrageSchedule) fail(scheduleErr error) {
 		if e.isReplacingApplied {
 			e.run.ReleaseEffect()
 			peerSession.enrageRun = e.previousRun
+			peerSession.enrageRecipient = e.previousRecipient
 		} else {
 			_, _ = e.run.Expire(
-				campaignEnrageState{session: &peerSession},
+				campaignEnrageAdapter(&peerSession, true),
 			)
 			peerSession.enrageRun = nil
+			peerSession.enrageRecipient = nil
 		}
 		_ = peerSession.setCampaignCharacterManaPoints(
 			e.creatureIndex, e.previousManaPoint,
@@ -2119,54 +2143,27 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			peerSession, creatureIndex, abilityStartTime,
 		)
 		targetObjectID := command.Ability.TargetID
-		firstHeroObjectID := zonehero.ObjectID(peerSession.binding.Slot, 0)
-		lastHeroObjectID := zonehero.ObjectID(peerSession.binding.Slot, squad.Size-1)
-		// The native instant-target template does not reject an enemy or empty
-		// client target. It searches for a friendly recipient around the stored
-		// point and falls back to the caster when none is usable.
-		targetCreatureIndex := creatureIndex
-		isHeroTarget := targetObjectID >= firstHeroObjectID &&
-			targetObjectID <= lastHeroObjectID
-		if isHeroTarget {
-			candidateCreatureIndex := targetObjectID - firstHeroObjectID
-			candidateCharacter, isCandidateFound :=
-				peerSession.squad.Character(candidateCreatureIndex)
-			if isCandidateFound && candidateCharacter.IsAvailable &&
-				candidateCharacter.HitPoints > 0 &&
-				candidateCreatureIndex < uint32(len(peerSession.binding.Creatures)) {
-				targetCreatureIndex = candidateCreatureIndex
+		targetSession, targetCreatureIndex, isCompanionTarget, recipient, isTargetFound := r.enrageRecipientLocked(peerSession, targetObjectID)
+		if !isTargetFound {
+			position := command.Ability.TargetPosition
+			if position == (raknet.Vector3{}) {
+				position = command.Ability.CursorPosition
 			}
+			targetObjectID = r.nearestEnrageTargetLocked(peerSession, game.Vec3(position))
+			targetSession, targetCreatureIndex, isCompanionTarget, recipient, isTargetFound = r.enrageRecipientLocked(peerSession, targetObjectID)
 		}
-		isCompanionTarget := false
-		targetCreature := game.GameplayCreature{}
-		if peerSession.zone != nil && peerSession.zone.Companion() != nil {
-			companion, isCompanionFound :=
-				peerSession.zone.Companion().Snapshot(targetObjectID)
-			isCompanionTarget = isCompanionFound && companion.HitPoint > 0 &&
-				companion.UserID == peerSession.binding.UserID &&
-				companion.PeerGeneration == peerSession.generation
-			if isCompanionTarget {
-				targetCreature = creature
-				targetCreature.HitPoint = companion.MaximumHitPoint
-				targetCreature.MaximumHitPoint = companion.MaximumHitPoint
-				targetCreature.DamageProfile.PrimaryAttribute = creature.PetDamage
-				targetCreature.DamageProfile.IsPrimaryAttributeFound = true
-			}
+		if !isTargetFound {
+			r.registry.mutex.Unlock()
+			return request.reject("living allied Enrage target unavailable")
 		}
-		if !isCompanionTarget {
-			targetObjectID = zonehero.ObjectID(
-				peerSession.binding.Slot, targetCreatureIndex,
-			)
-			targetCharacter, isTargetFound :=
-				peerSession.squad.Character(targetCreatureIndex)
-			if !isTargetFound || !targetCharacter.IsAvailable ||
-				targetCharacter.HitPoints <= 0 ||
-				targetCreatureIndex >= uint32(len(peerSession.binding.Creatures)) {
-				r.registry.mutex.Unlock()
-				return request.reject("living allied Enrage target unavailable")
-			}
-			targetCreature = peerSession.binding.Creatures[targetCreatureIndex]
+		targetState := campaignEnrageState{session: &targetSession}
+		target, isTargetAvailable := targetState.EnrageTarget(targetCreatureIndex, targetObjectID, isCompanionTarget)
+		if !isTargetAvailable {
+			r.registry.mutex.Unlock()
+			return request.reject("living allied Enrage target unavailable")
 		}
+		targetCreature := target.Creature
+		previousRecipient := peerSession.enrageRecipient
 		previousEnrageRun := peerSession.enrageRun
 		if previousEnrageRun != nil &&
 			previousEnrageRun.TargetObjectID() != targetObjectID {
@@ -2276,6 +2273,7 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			return request.reject("Enrage release unavailable")
 		}
 		peerSession.enrageRun = run
+		peerSession.enrageRecipient = recipient
 		generation := peerSession.generation
 		binding := peerSession.binding
 		r.registry.sessions[sessionKey] = peerSession
@@ -2287,6 +2285,7 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			creatureIndex: creatureIndex, previousManaPoint: previousManaPoint,
 			definition: definition, binding: binding, run: run,
 			previousRun:         previousEnrageRun,
+			previousRecipient:   previousRecipient,
 			cooldownReservation: cooldownReservation,
 			releaseReservation:  releaseReservation,
 			releasePacket:       releasePacket,

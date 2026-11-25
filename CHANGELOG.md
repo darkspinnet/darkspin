@@ -2,6 +2,11 @@
 
 ### 2026-11-24
 
+- #219 Keep co-op player records registered during Continue so the next mission's heroes retain their native owner.
+- #219 Let Enrage target co-op allies and their pets, including its friendly cursor search, healing credit, and buff cleanup.
+- #219 Give voluntarily dropped equipment to its collector instead of returning it to the original owner or rolling it across the party.
+- #219 Apply the Mutation Agent progression gate to optional mission 1-1 hordes and fences while preserving the separate boss encounter.
+- #219 Steer Affliction Bolt without repeatedly snapping its native position at each movement sample.
 - #218 Restore Wraith's Desecrated Visage aura on its caster and remove it on death or hero changes.
 - #218 Enable ambient elite spawning at the authored stage-dependent chances in default and existing campaign zone rules.
 

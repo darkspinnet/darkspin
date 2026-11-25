@@ -550,6 +550,7 @@ type controlledHeroPresentation struct {
 	plasmaWreathRestoreObjectID  uint32
 	plasmaWreathStoppedRuns      []*abilityraknet.PlasmaWreathRun
 	enrageRun                    *abilityraknet.EnrageRun
+	enrageRecipient              *enrageRecipient
 	ghostFormRun                 *abilityraknet.GhostFormRun
 	heroModifierRuns             map[heroModifierKey]*heroModifierRun
 	omniShields                  map[uint32]*omniShieldRun
@@ -2135,7 +2136,13 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 		e.enrageRun.Cancel()
 		// Recovery cancels the expiry timer, so perform the modifier's full
 		// deactivation now, including its damage bonus and client presentation.
-		enragePackets, enrageErr := e.enrageRun.Expire(campaignEnrageState{session: e})
+		var enragePackets [][]byte
+		var enrageErr error
+		if e.enrageRecipient != nil {
+			e.retireSharedEnrage(true)
+		} else {
+			enragePackets, enrageErr = e.enrageRun.Expire(campaignEnrageAdapter(e, true))
+		}
 		if enrageErr != nil {
 			// A missing target can prevent Expire from reaching attachment cleanup.
 			e.enrageRun.ReleaseEffect()
@@ -2146,6 +2153,7 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 			_ = modifierInstancePool.Release(e.enrageRun.InstanceID())
 		}
 		e.enrageRun = nil
+		e.enrageRecipient = nil
 	}
 	e.retireGhostForm(modifierInstancePool)
 	for _, modifierRun := range e.heroModifierRuns {

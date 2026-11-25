@@ -41,7 +41,8 @@ func (e *campaignEquipmentPickupStep) prepareLocked(currentSession gameplayPeerS
 	if !isInventoryReader {
 		return errors.New("equipment capacity unavailable")
 	}
-	if e.pickup.WinnerUserID == 0 {
+	isInventoryDrop := e.pickup.PresentationPolicy == zoneloot.EquipmentInventoryGroundDrop
+	if e.pickup.WinnerUserID == 0 && !isInventoryDrop {
 		e.fullInventoryUserID = currentSession.binding.UserID
 		participants := e.runtime.equipmentRollParticipantsLocked(currentSession)
 		eligibleParticipants := make([]zoneloot.EquipmentRollParticipant, 0, len(participants))
@@ -90,6 +91,9 @@ func (e *campaignEquipmentPickupStep) prepareLocked(currentSession gameplayPeerS
 		}
 	}
 	e.userID = e.pickup.WinnerUserID
+	if isInventoryDrop && e.userID == 0 {
+		e.userID = currentSession.binding.UserID
+	}
 	inventoryStatus, err := inventoryReader.PartInventoryStatus(e.ctx, int64(e.userID))
 	if err != nil {
 		return fmt.Errorf("winnerCapacity: %w", err)
@@ -98,11 +102,20 @@ func (e *campaignEquipmentPickupStep) prepareLocked(currentSession gameplayPeerS
 	if inventoryStatus.IsFull {
 		e.fullInventoryUserID = e.userID
 		e.fullInventoryStatus = inventoryStatus
-		clearErr := currentSession.zone.PickupPayload().ClearEquipmentRoll(e.pickup.ObjectID, e.userID)
-		if clearErr != nil {
-			return fmt.Errorf("winnerReset: %w", errors.Join(zone.ErrMissionInventoryFull, clearErr))
+		if e.pickup.WinnerUserID != 0 {
+			clearErr := currentSession.zone.PickupPayload().ClearEquipmentRoll(e.pickup.ObjectID, e.userID)
+			if clearErr != nil {
+				return fmt.Errorf("winnerReset: %w", errors.Join(zone.ErrMissionInventoryFull, clearErr))
+			}
 		}
 		return fmt.Errorf("winnerFull: %w", zone.ErrMissionInventoryFull)
+	}
+	if isInventoryDrop && e.pickup.WinnerUserID == 0 {
+		selectedPickup, selectErr := currentSession.zone.PickupPayload().SetEquipmentRoll(e.pickup.ObjectID, e.userID, nil)
+		if selectErr != nil {
+			return fmt.Errorf("dropCollector: %w", selectErr)
+		}
+		e.pickup = selectedPickup
 	}
 	if e.pickup.IsWinnerPartFinalized {
 		return nil

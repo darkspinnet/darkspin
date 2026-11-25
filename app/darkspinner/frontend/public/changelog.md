@@ -1,5 +1,15 @@
 # Changelog
 
+### 2026-11-24
+
+- [#218](https://github.com/darkspinnet/darkspin/issues/218) Restore Wraith's Desecrated Visage aura on its caster and remove it on death or hero changes.
+- [#218](https://github.com/darkspinnet/darkspin/issues/218) Enable ambient elite spawning at the authored stage-dependent chances in default and existing campaign zone rules.
+
+### 2026-11-22
+
+- [#217](https://github.com/darkspinnet/darkspin/issues/217) Restore Lumin's Charge Field recipient visuals, including its Overdrive effect, and retire them when recipients leave the aura.
+- [#217](https://github.com/darkspinnet/darkspin/issues/217) Use the correct attachment slot for SRS-42's Targeting Computer so its scanner effect can be removed without accumulating.
+
 ### 2026-11-19
 
 - [#215](https://github.com/darkspinnet/darkspin/issues/215) Remove the guessed Infinity hazard circle that dealt 10% maximum-health damage on walkable ground.

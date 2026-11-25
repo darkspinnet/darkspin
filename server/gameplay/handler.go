@@ -4509,6 +4509,10 @@ func stopGameplayPeerSession(
 }
 
 func leaveGameplayPeerMembership(peerSession gameplayPeerSession) {
+	leaveGameplayPeerMembershipForTransition(peerSession, false)
+}
+
+func leaveGameplayPeerMembershipForTransition(peerSession gameplayPeerSession, isContinuing bool) {
 	peerSession.retireOmniShields()
 	if peerSession.zone == nil {
 		return
@@ -4536,9 +4540,11 @@ func leaveGameplayPeerMembership(peerSession gameplayPeerSession) {
 			log.Printf("RakNet Sage membership cleanup failed user=%d requests=%d: %v", peerSession.binding.UserID, len(requests), err)
 		}
 	}
-	peerSession.zone.Leave(
-		peerSession.binding.UserID, peerSession.generation,
-	)
+	if isContinuing {
+		peerSession.zone.LeaveForContinue(peerSession.binding.UserID, peerSession.generation)
+	} else {
+		peerSession.zone.Leave(peerSession.binding.UserID, peerSession.generation)
+	}
 	// Permanent departure can settle the final semantic-member deletion lease.
 	peerSession.retireOmniShields()
 	peerSession.settleChannelRemovals()
@@ -4558,6 +4564,7 @@ func stopGameplayPeerRuntime(
 	if peerSession.binding.Mode == game.ModeArena && peerSession.arenaEffectPool != nil {
 		effectPool = peerSession.arenaEffectPool
 	}
+	peerSession.retireSharedEnrage(false)
 	sinkholePackets, sinkholeErr := peerSession.updateSinkholeWind(0, effectPool)
 	if sinkholeErr != nil {
 		log.Printf("Sinkhole wind cleanup user=%d: %v", peerSession.binding.UserID, sinkholeErr)
@@ -4805,6 +4812,7 @@ func resetGameplayPeerRuntime(
 	}
 	// The developer reset caller owns the registry lock. Retire Blink here so
 	// detached runtime teardown below does not try to acquire it recursively.
+	peerSession.retireSharedEnrage(true)
 	err := peerSession.retireQuantumBlinkLocked(time.Now())
 	if err != nil {
 		log.Printf("RakNet Quantum Blink reset cleanup failed user=%d: %v", peerSession.binding.UserID, err)
